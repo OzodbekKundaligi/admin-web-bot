@@ -1,0 +1,1583 @@
+import os
+import logging
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+import telebot
+import telebot.apihelper as apihelper
+import time
+
+from telebot import types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from dotenv import load_dotenv
+
+# Environment o'qish
+load_dotenv()
+
+# Bot tokenini environmentdan olish
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8468261643:AAE3us01znFjgyfLLzOmOxT3cFsSMaKyif8')
+CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', '@GarajHub_test')
+ADMIN_ID = int(os.getenv('ADMIN_ID', '7903688837'))
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode='HTML')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+from db import (
+    init_db,
+    get_user, save_user, update_user_field,
+    create_startup, get_startup, get_startups_by_owner,
+    get_pending_startups, get_active_startups, update_startup_status, update_startup_results,
+    add_startup_member, get_join_request_id, update_join_request,
+    get_startup_members, get_statistics, get_all_users,
+    get_recent_users, get_recent_startups, get_completed_startups,
+    get_rejected_startups, get_all_startup_members
+)
+  
+
+# Database initialization
+init_db()
+
+# User state management
+user_states = {}
+
+def set_user_state(user_id: int, state: str):
+    user_states[user_id] = state
+
+def get_user_state(user_id: int) -> str:
+    return user_states.get(user_id, '')
+
+def clear_user_state(user_id: int):
+    if user_id in user_states:
+        del user_states[user_id]
+
+# Orqaga tugmasini yaratish
+def create_back_button():
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(KeyboardButton('🔙 Orqaga'))
+    return markup
+
+# Asosiy menyu tugmalari - MATNLAR O'ZGARTIRILDI
+def create_main_menu(user_id: int):
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    buttons = [
+        KeyboardButton('🌍 Startaplar ro\'yxati'),
+        KeyboardButton('📋 Mening startaplarim'),
+        KeyboardButton('✨ Yangi startap yaratish'),
+        KeyboardButton('👤 Mening profilim')
+    ]
+    markup.add(*buttons)
+    
+    if user_id == ADMIN_ID:
+        markup.add(KeyboardButton('⚙️ Admin panel'))
+    
+    return markup
+
+# 1. START - KANALGA OBUNA TEKSHIRISH
+@bot.message_handler(commands=['start', 'help', 'boshlash'])
+def start_command(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    first_name = message.from_user.first_name or ""
+    
+    save_user(user_id, username, first_name)
+    
+    # Kanalga obuna tekshirish
+    try:
+        chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        if chat_member.status in ['member', 'administrator', 'creator']:
+            show_main_menu(message)
+        else:
+            ask_for_subscription(message)
+    except Exception as e:
+        logging.error(f"Obuna tekshirishda xatolik: {e}")
+        ask_for_subscription(message)
+
+def ask_for_subscription(message):
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton('📢 Kanalga o\'tish', url=f'https://t.me/{CHANNEL_USERNAME[1:]}'),
+        InlineKeyboardButton('✅ Obunani tekshirish', callback_data='check_subscription')
+    )
+    bot.send_message(
+        message.chat.id,
+        "🤖 <b>StartapHub Botiga xush kelibsiz!</b>\n\n"
+        "Botdan to'liq foydalanish uchun avval bizning kanalimizga obuna bo'ling 👇",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == 'check_subscription')
+def check_subscription_callback(call):
+    user_id = call.from_user.id
+    try:
+        chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        if chat_member.status in ['member', 'administrator', 'creator']:
+            show_main_menu(call)
+            bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi! Botdan foydalanishingiz mumkin.")
+        else:
+            bot.answer_callback_query(call.id, "❌ Iltimos, kanalga obuna bo'ling!", show_alert=True)
+    except Exception as e:
+        logging.error(f"Obuna tekshirishda xatolik: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+def show_main_menu(message_or_call):
+    if isinstance(message_or_call, types.CallbackQuery):
+        chat_id = message_or_call.message.chat.id
+        message_id = message_or_call.message.message_id
+        try:
+            bot.delete_message(chat_id, message_id)
+        except:
+            pass
+    else:
+        chat_id = message_or_call.chat.id
+    
+    user_id = message_or_call.from_user.id if isinstance(message_or_call, types.CallbackQuery) else message_or_call.from_user.id
+    clear_user_state(user_id)
+    
+    text = "👋 <b>Assalomu alaykum! StartapHub ga xush kelibsiz!</b>\n\n🚀 <b>StartapHub</b> — yosh iqtidorlar va tadbirkorlar uchun startaplar platformasi.\n\nQuyidagi tugmalardan birini tanlang:"
+    
+    bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
+
+# 2. PROFIL (Yangilangan)
+@bot.message_handler(func=lambda message: message.text == '👤 Mening profilim')
+def show_profile(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'in_profile')
+    
+    user = get_user(user_id)
+    if not user:
+        save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
+        user = get_user(user_id)
+    
+    profile_text = (
+        "👤 <b>Shaxsiy profil ma'lumotlari:</b>\n\n"
+        f"🧑 <b>Ism:</b> {user.get('first_name', '—')}\n"
+        f"🧾 <b>Familiya:</b> {user.get('last_name', '—')}\n"
+        f"⚧️ <b>Jins:</b> {user.get('gender', '—')}\n"
+        f"📞 <b>Telefon raqam:</b> {user.get('phone', '+998*')}\n"
+        f"🎂 <b>Tug'ilgan sana:</b> {user.get('birth_date', '—')}\n"
+        f"📝 <b>Bio va qisqacha ma'lumot:</b> {user.get('bio', '—')}\n\n"
+        "🛠 <b>Ma'lumotlarni tahrirlash uchun quyidagi tugmalardan foydalaning:</b>"
+    )
+    
+    markup_inline = InlineKeyboardMarkup(row_width=2)
+    markup_inline.add(
+        InlineKeyboardButton('✏️ Ismni o\'zgartirish', callback_data='edit_first_name'),
+        InlineKeyboardButton('✏️ Familiyani o\'zgartirish', callback_data='edit_last_name'),
+        InlineKeyboardButton('📞 Telefon raqam', callback_data='edit_phone'),
+        InlineKeyboardButton('⚧️ Jinsni tanlash', callback_data='edit_gender'),
+        InlineKeyboardButton('🎂 Tug\'ilgan sana', callback_data='edit_birth_date'),
+        InlineKeyboardButton('📝 Bio ma\'lumot', callback_data='edit_bio')
+    )
+    markup_inline.add(InlineKeyboardButton('🔙 Asosiy menyuga qaytish', callback_data='back_to_main_menu'))
+
+    bot.send_message(message.chat.id, profile_text, reply_markup=markup_inline)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('edit_'))
+def handle_edit_profile(call):
+    user_id = call.from_user.id
+    set_user_state(user_id, f'editing_{call.data}')
+    
+    if call.data == 'edit_first_name':
+        msg = bot.send_message(call.message.chat.id, "📝 <b>Yangi ismingizni kiriting:</b>", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_first_name)
+    
+    elif call.data == 'edit_last_name':
+        msg = bot.send_message(call.message.chat.id, "📝 <b>Yangi familiyangizni kiriting:</b>", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_last_name)
+    
+    elif call.data == 'edit_phone':
+        msg = bot.send_message(call.message.chat.id, 
+                              "📱 <b>Telefon raqamingizni kiriting:</b>\n\n"
+                              "Format: <code>+998901234567</code> yoki <code>901234567</code>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_phone)
+    
+    elif call.data == 'edit_gender':
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton('👨 Erkak', callback_data='gender_male'),
+            InlineKeyboardButton('👩 Ayol', callback_data='gender_female'),
+            InlineKeyboardButton('🔙 Profilga qaytish', callback_data='back_to_profile')
+        )
+        bot.edit_message_text("⚧️ <b>Jinsingizni tanlang:</b>", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    
+    elif call.data == 'edit_birth_date':
+        msg = bot.send_message(call.message.chat.id, 
+                              "🎂 <b>Tug'ilgan sanangizni kiriting (kun/oy/yil)</b>\n"
+                              "Masalan: <code>30/04/2000</code> yoki <code>30-04-2000</code>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_birth_date)
+    
+    elif call.data == 'edit_bio':
+        msg = bot.send_message(call.message.chat.id, 
+                              "📝 <b>O'zingiz haqingizda qisqacha ma'lumot kiriting:</b>\n"
+                              "(Qobiliyatlaringiz, tajribangiz, qiziqishlaringiz haqida)", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_bio)
+    
+    bot.answer_callback_query(call.id)
+
+def process_first_name(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        show_profile(message)
+        clear_user_state(user_id)
+        return
+    
+    update_user_field(user_id, 'first_name', message.text)
+    bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli yangilandi</b>", reply_markup=create_back_button())
+    show_profile(message)
+
+def process_last_name(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        show_profile(message)
+        clear_user_state(user_id)
+        return
+    
+    update_user_field(user_id, 'last_name', message.text)
+    bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli yangilandi</b>", reply_markup=create_back_button())
+    show_profile(message)
+
+def process_phone(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        show_profile(message)
+        clear_user_state(user_id)
+        return
+    
+    phone = message.text
+    if not phone.startswith('+'):
+        phone = '+998' + phone[-9:] if len(phone) == 9 else phone
+    
+    update_user_field(user_id, 'phone', phone)
+    bot.send_message(message.chat.id, "✅ <b>Telefon raqamingiz saqlandi</b>", reply_markup=create_back_button())
+    show_profile(message)
+
+@bot.callback_query_handler(func=lambda call: call.data in ['gender_male', 'gender_female'])
+def process_gender(call):
+    user_id = call.from_user.id
+    gender = 'Erkak' if call.data == 'gender_male' else 'Ayol'
+    update_user_field(user_id, 'gender', gender)
+    
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "✅ <b>Jinsingiz saqlandi</b>", reply_markup=create_back_button())
+    show_profile(call.message)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_profile')
+def back_to_profile(call):
+    show_profile(call.message)
+    bot.answer_callback_query(call.id)
+
+def process_birth_date(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        show_profile(message)
+        clear_user_state(user_id)
+        return
+    
+    update_user_field(user_id, 'birth_date', message.text)
+    bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sanangiz saqlandi</b>", reply_markup=create_back_button())
+    show_profile(message)
+
+def process_bio(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        show_profile(message)
+        clear_user_state(user_id)
+        return
+    
+    update_user_field(user_id, 'bio', message.text)
+    bot.send_message(message.chat.id, "✅ <b>Bio ma'lumotingiz saqlandi</b>", reply_markup=create_back_button())
+    show_profile(message)
+
+# 3. STARTUPLAR RO'YXATI (Yangilangan)
+@bot.message_handler(func=lambda message: message.text == '🌍 Startaplar ro\'yxati')
+def show_startups(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'viewing_startups')
+    
+    markup = create_back_button()
+    bot.send_message(message.chat.id, "🌍 <b>Barcha faol startaplar ro'yxati:</b>\n\nHar bir startap haqida batafsil ma'lumot olishingiz va ularga qo'shilishingiz mumkin.", reply_markup=markup)
+    show_startup_page(message.chat.id, 1)
+
+def show_startup_page(chat_id, page):
+    per_page = 1
+    startups, total = get_active_startups(page, per_page=per_page)
+    
+    if not startups:
+        bot.send_message(chat_id, "📭 <b>Hozircha faol startaplar mavjud emas.</b>\n\nYangi startaplar tez orada paydo bo'ladi yoki o'z startapingizni yarating!", reply_markup=create_back_button())
+        return
+    
+    startup = startups[0]
+    user = get_user(startup['owner_id'])
+    owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+    
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    
+    text = (
+        f"<b>🌍 Startaplar ro'yxati</b>\n"
+        f"📄 Sahifa: <b>{page}/{total_pages}</b>\n\n"
+        f"🎯 <b>{startup['name']}</b>\n\n"
+        f"📝 <b>Tavsif:</b> {startup['description'][:300]}...\n\n"
+        f"👤 <b>Asoschi:</b> {owner_name}\n"
+        f"🔗 <b>Guruh havolasi:</b> {startup.get('group_link', 'Mavjud emas')}"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton('🤝 Ushbu startapga qo\'shilish', callback_data=f'join_startup_{startup["_id"]}'))
+    
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton('⬅️ Oldingi', callback_data=f'startup_page_{page-1}'))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton('Keyingi ➡️', callback_data=f'startup_page_{page+1}'))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+    
+    markup.add(InlineKeyboardButton('🔙 Asosiy menyu', callback_data='back_to_main_menu'))
+    
+    try:
+        if startup.get('logo'):
+            bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup)
+    except Exception as e:
+        logging.error(f"Xabar yuborishda xatolik: {e}")
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('startup_page_'))
+def handle_startup_page(call):
+    try:
+        page = int(call.data.split('_')[2])
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_startup_page(call.message.chat.id, page)
+        bot.answer_callback_query(call.id)
+    except:
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('join_startup_'))
+def handle_join_startup(call):
+    try:
+        startup_id = call.data.split('_')[2]
+        user_id = call.from_user.id
+        
+        # Check if already joined
+        request_id = get_join_request_id(startup_id, user_id)
+        
+        if request_id:
+            bot.answer_callback_query(call.id, "📩 Sizning so'rovingiz hali ko'rib chiqilmoqda!", show_alert=True)
+        else:
+            add_startup_member(startup_id, user_id)
+            request_id = get_join_request_id(startup_id, user_id)
+            
+            bot.answer_callback_query(call.id, "✅ So'rov yuborildi! Startap asoschisi tasdiqlagandan so'ng sizga xabar yuboriladi.", show_alert=True)
+            
+            # Send notification to startup owner
+            startup = get_startup(startup_id)
+            user = get_user(user_id)
+            
+            if startup and user:
+                text = (
+                    f"🆕 <b>Yangi qo'shilish so'rovi</b>\n\n"
+                    f"👤 <b>Foydalanuvchi:</b> {user.get('first_name', '')} {user.get('last_name', '')}\n"
+                    f"📱 <b>Telefon:</b> {user.get('phone', '—')}\n"
+                    f"📝 <b>Bio:</b> {user.get('bio', '—')[:100]}...\n\n"
+                    f"🎯 <b>Startap:</b> {startup['name']}"
+                )
+                
+                markup = InlineKeyboardMarkup()
+                markup.add(
+                    InlineKeyboardButton('✅ Qabul qilish', callback_data=f'approve_join_{request_id}'),
+                    InlineKeyboardButton('❌ Rad etish', callback_data=f'reject_join_{request_id}')
+                )
+                
+                try:
+                    bot.send_message(startup['owner_id'], text, reply_markup=markup)
+                except Exception as e:
+                    logging.error(f"Egaga xabar yuborishda xatolik: {e}")
+                    try:
+                        bot.send_message(ADMIN_ID, f"⚠️ Ownerga xabar yuborilmadi (ID: {startup['owner_id']}) for join request {request_id}. Error: {e}")
+                    except:
+                        pass
+    except Exception as e:
+        logging.error(f"Join startup xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('approve_join_'))
+def approve_join_request(call):
+    try:
+        request_id = call.data.split('_')[2]
+        update_join_request(request_id, 'accepted')
+        
+        # Get startup details
+        from db import db, STARTUP_MEMBERS_COLLECTION, STARTUPS_COLLECTION
+        from bson import ObjectId
+        
+        member = db[STARTUP_MEMBERS_COLLECTION].find_one({'_id': ObjectId(request_id)})
+        if member:
+            startup_id = member['startup_id']
+            user_id = member['user_id']
+            
+            startup = db[STARTUPS_COLLECTION].find_one({'_id': ObjectId(startup_id)})
+            
+            if startup:
+                try:
+                    bot.send_message(
+                        user_id,
+                        f"🎉 <b>Tabriklaymiz! Siz startapga qabul qilindingiz!</b>\n\n"
+                        f"✅ <b>Startap:</b> {startup['name']}\n"
+                        f"🔗 <b>Guruhga qo'shilish uchun havola:</b> {startup['group_link']}\n\n"
+                        f"👥 Guruhga qo'shiling va faol ishtirok eting!"
+                    )
+                except Exception as e:
+                    logging.error(f"Foydalanuvchiga xabar yuborishda xatolik: {e}")
+        
+        bot.edit_message_text(
+            "✅ <b>So'rov tasdiqlandi va foydalanuvchiga havola yuborildi.</b>",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        bot.answer_callback_query(call.id, "✅ Tasdiqlandi!")
+        
+    except Exception as e:
+        logging.error(f"Approve join xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('reject_join_'))
+def reject_join_request(call):
+    try:
+        request_id = call.data.split('_')[2]
+        
+        from db import db, STARTUP_MEMBERS_COLLECTION
+        from bson import ObjectId
+        
+        member = db[STARTUP_MEMBERS_COLLECTION].find_one({'_id': ObjectId(request_id)})
+        if member:
+            user_id = member['user_id']
+            update_join_request(request_id, 'rejected')
+            
+            try:
+                bot.send_message(user_id, "❌ <b>Sizning startapga qo'shilish so'rovingiz rad etildi.</b>\n\nBoshqa startaplarga murojaat qilishingiz mumkin.")
+            except:
+                pass
+        
+        bot.edit_message_text(
+            "❌ <b>So'rov rad etildi.</b>",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        bot.answer_callback_query(call.id, "✅ Rad etildi!")
+        
+    except Exception as e:
+        logging.error(f"Reject join xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+# 4. MENING STARTUPLARIM (Yangilangan)
+@bot.message_handler(func=lambda message: message.text == '📋 Mening startaplarim')
+def show_my_startups(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'viewing_my_startups')
+    
+    markup = create_back_button()
+    bot.send_message(message.chat.id, "📋 <b>Mening startaplarim:</b>\n\nYaratgan barcha startaplaringiz va ularning holati:", reply_markup=markup)
+    show_my_startups_page(message.chat.id, user_id, 1)
+
+def show_my_startups_page(chat_id, user_id, page):
+    startups = get_startups_by_owner(user_id)
+    
+    if not startups:
+        bot.send_message(chat_id, "📭 <b>Sizda hali startap mavjud emas.</b>\n\n'✨ Yangi startap yaratish' tugmasi orqali o'z startapingizni yarating!", reply_markup=create_back_button())
+        return
+    
+    per_page = 5
+    total = len(startups)
+    total_pages = (total + per_page - 1) // per_page
+    page = min(max(1, page), total_pages)
+    
+    start_idx = (page - 1) * per_page
+    end_idx = min(start_idx + per_page, total)
+    page_startups = startups[start_idx:end_idx]
+    
+    text = f"<b>📋 Mening startaplarim</b>\n📄 Sahifa: <b>{page}/{total_pages}</b>\n\n"
+    for i, startup in enumerate(page_startups, start=start_idx + 1):
+        status_emoji = {
+            'pending': '⏳ Kutilmoqda',
+            'active': '▶️ Faol',
+            'completed': '✅ Yakunlangan',
+            'rejected': '❌ Rad etilgan'
+        }.get(startup['status'], '❓')
+        text += f"{i}. <b>{startup['name']}</b> - {status_emoji}\n"
+    
+    markup = InlineKeyboardMarkup(row_width=3)
+    
+    # Page numbers
+    buttons = []
+    for i in range(1, total_pages + 1):
+        if i <= 5:  # Faqat birinchi 5 sahifani ko'rsat
+            buttons.append(InlineKeyboardButton(f'📄 {i}', callback_data=f'my_startup_page_{i}'))
+    
+    if buttons:
+        markup.row(*buttons)
+    
+    # Navigation
+    if page > 1:
+        markup.add(InlineKeyboardButton('⬅️ Oldingi', callback_data=f'my_startup_page_{page-1}'))
+    if page < total_pages:
+        markup.add(InlineKeyboardButton('Keyingi ➡️', callback_data=f'my_startup_page_{page+1}'))
+    
+    # Startup selection
+    if page_startups:
+        for i, startup in enumerate(page_startups):
+            markup.add(InlineKeyboardButton(f'📁 {startup["name"][:20]}', 
+                                           callback_data=f'view_startup_{startup["_id"]}'))
+    
+    markup.add(InlineKeyboardButton('🔙 Asosiy menyu', callback_data='back_to_main_menu'))
+    
+    bot.send_message(chat_id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('my_startup_page_'))
+def handle_my_startup_page(call):
+    try:
+        page = int(call.data.split('_')[3])
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_my_startups_page(call.message.chat.id, call.from_user.id, page)
+        bot.answer_callback_query(call.id)
+    except:
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('view_startup_'))
+def view_startup_details(call):
+    try:
+        startup_id = call.data.split('_')[2]
+        startup = get_startup(startup_id)
+        
+        if not startup:
+            bot.answer_callback_query(call.id, "❌ Startap topilmadi!", show_alert=True)
+            return
+        
+        user = get_user(startup['owner_id'])
+        owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+        
+        # Get member count
+        members, total_members = get_startup_members(startup_id, 1, 1)
+        
+        status_texts = {
+            'pending': '⏳ Admin tasdigini kutyapti',
+            'active': '▶️ Faol ishlamoqda',
+            'completed': '✅ Muvaffaqiyatli yakunlangan',
+            'rejected': '❌ Rad etilgan'
+        }
+        
+        status_text = status_texts.get(startup['status'], startup['status'])
+        
+        start_date = startup.get('started_at', '—')
+        if start_date and start_date != '—' and isinstance(start_date, datetime):
+            start_date = start_date.strftime('%d/%m/%Y')
+        
+        created_date = startup.get('created_at', '—')
+        if created_date and created_date != '—' and isinstance(created_date, datetime):
+            created_date = created_date.strftime('%d/%m/%Y')
+        
+        text = (
+            f"🎯 <b>Startap nomi:</b> {startup['name']}\n"
+            f"📊 <b>Holati:</b> {status_text}\n"
+            f"📅 <b>Yaratilgan sana:</b> {created_date}\n"
+            f"📅 <b>Boshlangan sana:</b> {start_date}\n"
+            f"👤 <b>Asoschi:</b> {owner_name}\n"
+            f"👥 <b>A'zolar soni:</b> {total_members} ta\n\n"
+            f"📌 <b>Tavsif:</b>\n{startup['description']}"
+        )
+        
+        markup = InlineKeyboardMarkup()
+        
+        if startup['status'] == 'pending':
+            markup.add(InlineKeyboardButton('⏳ Tasdiq kutilmoqda...', callback_data='waiting_approval'))
+        elif startup['status'] == 'active':
+            markup.add(InlineKeyboardButton('👥 A\'zolar ro\'yxati', callback_data=f'view_members_{startup_id}_1'))
+            markup.add(InlineKeyboardButton('🏁 Startapni yakunlash', callback_data=f'complete_startup_{startup_id}'))
+        elif startup['status'] == 'completed':
+            markup.add(InlineKeyboardButton('👥 A\'zolar ro\'yxati', callback_data=f'view_members_{startup_id}_1'))
+            if startup.get('results'):
+                markup.add(InlineKeyboardButton('📊 Yakuniy natijalar', callback_data=f'view_results_{startup_id}'))
+        elif startup['status'] == 'rejected':
+            markup.add(InlineKeyboardButton('❌ Rad etilgan', callback_data='rejected_info'))
+        
+        markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_my_startups'))
+        
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        
+        if startup.get('logo'):
+            bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+        else:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"View startup xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_my_startups')
+def back_to_my_startups(call):
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_my_startups_page(call.message.chat.id, call.from_user.id, 1)
+        bot.answer_callback_query(call.id)
+    except:
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('view_members_'))
+def view_startup_members(call):
+    try:
+        parts = call.data.split('_')
+        startup_id = parts[2]
+        page = int(parts[3])
+        
+        members, total = get_startup_members(startup_id, page)
+        total_pages = max(1, (total + 4) // 5)
+        
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        if not members:
+            text = "👥 <b>A'zolar ro'yxati</b>\n\n📭 <b>Hozircha startapda a'zolar yo'q.</b>"
+            markup = InlineKeyboardMarkup()
+        else:
+            text = f"👥 <b>Startap a'zolari</b>\n📄 Sahifa: <b>{page}/{total_pages}</b>\n\n"
+            for i, member in enumerate(members, start=(page-1)*5+1):
+                member_name = f"{member.get('first_name', '')} {member.get('last_name', '')}".strip()
+                if not member_name:
+                    member_name = f"Foydalanuvchi {member.get('user_id', '')}"
+                text += f"{i}. <b>{member_name}</b>\n"
+                if member.get('phone'):
+                    text += f"   📱 {member.get('phone')}\n"
+                if member.get('bio'):
+                    bio_short = member.get('bio', '')[:50] + '...' if len(member.get('bio', '')) > 50 else member.get('bio', '')
+                    text += f"   📝 {bio_short}\n"
+                text += "\n"
+        
+        markup = InlineKeyboardMarkup()
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton('⬅️ Oldingi', callback_data=f'view_members_{startup_id}_{page-1}'))
+        if page < total_pages:
+            nav_buttons.append(InlineKeyboardButton('Keyingi ➡️', callback_data=f'view_members_{startup_id}_{page+1}'))
+        
+        if nav_buttons:
+            markup.row(*nav_buttons)
+        
+        markup.add(InlineKeyboardButton('🔙 Startapga qaytish', callback_data=f'view_startup_{startup_id}'))
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"View members xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('view_results_'))
+def view_startup_results(call):
+    try:
+        startup_id = call.data.split('_')[2]
+        startup = get_startup(startup_id)
+        
+        if not startup or not startup.get('results'):
+            bot.answer_callback_query(call.id, "📭 Yakuniy natijalar hali kiritilmagan!", show_alert=True)
+            return
+        
+        text = (
+            f"📊 <b>Startap yakuniy natijalari</b>\n\n"
+            f"🎯 <b>Startap nomi:</b> {startup['name']}\n\n"
+            f"📝 <b>Erishilgan natijalar:</b>\n{startup['results']}\n\n"
+        )
+        
+        if startup.get('ended_at'):
+            try:
+                if isinstance(startup['ended_at'], datetime):
+                    end_date = startup['ended_at'].strftime('%d/%m/%Y')
+                else:
+                    end_date = startup['ended_at']
+                text += f"📅 <b>Yakunlangan sana:</b> {end_date}"
+            except:
+                pass
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton('🔙 Startapga qaytish', callback_data=f'view_startup_{startup_id}'))
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"View results xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('complete_startup_'))
+def complete_startup(call):
+    try:
+        startup_id = call.data.split('_')[2]
+        user_id = call.from_user.id
+        set_user_state(user_id, f'completing_startup_{startup_id}')
+        
+        msg = bot.send_message(call.message.chat.id, 
+                              "📝 <b>Startapni yakunlash uchun quyidagi ma'lumotlarni kiriting:</b>\n\n"
+                              "1. Qanday natijalarga erishdingiz?\n"
+                              "2. Qanday muvaffaqiyatlarga erishildi?\n"
+                              "3. Qiyinchiliklar va ularning yechimlari?\n\n"
+                              "<i>Batafsil va aniq yozing:</i>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_results, startup_id)
+        
+        bot.answer_callback_query(call.id)
+    except:
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+def process_startup_results(message, startup_id):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        # Go back to startup view
+        startup = get_startup(startup_id)
+        if startup:
+            text = f"🔙 <b>Startapga qaytish:</b> {startup['name']}"
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton('🔙 Startapga qaytish', callback_data=f'view_startup_{startup_id}'))
+            bot.send_message(message.chat.id, text, reply_markup=markup)
+        return
+    
+    results_text = message.text
+    
+    msg = bot.send_message(message.chat.id, 
+                          "🖼 <b>Yakuniy natijalar uchun rasm yuboring:</b>\n\n"
+                          "(Ixtiyoriy - agar kerak bo'lsa)\n\n"
+                          "<i>Agar rasm yubormasangiz, faqat matn saqlanadi</i>", 
+                          reply_markup=create_back_button())
+    bot.register_next_step_handler(msg, process_startup_photo, startup_id, results_text)
+
+def process_startup_photo(message, startup_id, results_text):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        msg = bot.send_message(message.chat.id, "📝 <b>Natijalarni kiriting:</b>", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_results, startup_id)
+        return
+    
+    photo_id = None
+    if message.photo:
+        photo_id = message.photo[-1].file_id
+    
+    # Update startup status and results
+    update_startup_status(startup_id, 'completed')
+    update_startup_results(startup_id, results_text, datetime.now())
+    
+    # Get all members
+    members = get_all_startup_members(startup_id)
+    
+    startup = get_startup(startup_id)
+    
+    # Send notification to all members
+    end_date = datetime.now().strftime('%d/%m/%Y')
+    success_count = 0
+    
+    for member_id in members:
+        try:
+            notification_text = (
+                f"🏁 <b>Startap yakunlandi!</b>\n\n"
+                f"🎯 <b>{startup['name']}</b>\n"
+                f"📅 <b>Yakunlangan sana:</b> {end_date}\n\n"
+                f"📝 <b>Yakuniy hisobot:</b>\n{results_text[:500]}..."
+            )
+            
+            if photo_id:
+                bot.send_photo(member_id, photo_id, caption=notification_text)
+            else:
+                bot.send_message(member_id, notification_text)
+            
+            success_count += 1
+        except Exception as e:
+            logging.error(f"Member {member_id} ga xabar yuborishda xatolik: {e}")
+    
+    bot.send_message(message.chat.id, 
+                    f"✅ <b>Startap muvaffaqiyatli yakunlandi!</b>\n\n"
+                    f"📤 Xabar yuborildi: {success_count} ta a'zoga\n"
+                    f"📝 Natijalar saqlandi", 
+                    reply_markup=create_back_button())
+    
+    clear_user_state(user_id)
+    
+    # Show updated startup details
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton('🔙 Startaplar ro\'yxatiga qaytish', callback_data=f'view_startup_{startup_id}'))
+    
+    startup = get_startup(startup_id)
+    text = (
+        f"✅ <b>Startap yakunlandi!</b>\n\n"
+        f"🎯 <b>{startup['name']}</b>\n"
+        f"📅 <b>Yakunlangan sana:</b> {end_date}\n\n"
+        f"📝 <b>Yakuniy natijalar:</b>\n{results_text[:300]}..."
+    )
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+# 5. YANGI STARTAP YARATISH (Yangilangan)
+@bot.message_handler(func=lambda message: message.text == '✨ Yangi startap yaratish')
+def start_creation(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'creating_startup')
+    
+    markup = create_back_button()
+    bot.send_message(message.chat.id, 
+                    "🚀 <b>Yangi startap yaratish!</b>\n\n"
+                    "Quyidagi qadamlarni bajarib, o'z startapingizni yarating:\n\n"
+                    "1️⃣ <b>Startap nomini kiriting:</b>\n"
+                    "(Qisqa va tushunarli nom tanlang)", 
+                    reply_markup=markup)
+    bot.register_next_step_handler(message, process_startup_name, {'owner_id': user_id})
+
+def process_startup_name(message, data):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_main_menu(message)
+        return
+    
+    if len(message.text) < 3:
+        msg = bot.send_message(message.chat.id, "⚠️ <b>Startap nomi juda qisqa!</b>\n\nIltimos, kamida 3 ta belgidan iborat nom kiriting:", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_name, data)
+        return
+    
+    data['name'] = message.text
+    msg = bot.send_message(message.chat.id, 
+                          "2️⃣ <b>Startap tavsifini kiriting:</b>\n\n"
+                          "Startapning:\n"
+                          "• Maqsadi va vazifalari\n"
+                          "• Qanday muammoni hal qiladi\n"
+                          "• Qanday imkoniyatlar bor\n"
+                          "• Kimlar uchun mo'ljallangan\n\n"
+                          "<i>Batafsil va tushunarli yozing:</i>", 
+                          reply_markup=create_back_button())
+    bot.register_next_step_handler(msg, process_startup_description, data)
+
+def process_startup_description(message, data):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_main_menu(message)
+        return
+    
+    if len(message.text) < 50:
+        msg = bot.send_message(message.chat.id, "⚠️ <b>Tavsif juda qisqa!</b>\n\nIltimos, kamida 50 ta belgidan iborat batafsil tavsif kiriting:", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_description, data)
+        return
+    
+    data['description'] = message.text
+    msg = bot.send_message(message.chat.id, 
+                          "3️⃣ <b>Startap logotipini yuboring:</b>\n\n"
+                          "(Ixtiyoriy - agar mavjud bo'lsa)\n\n"
+                          "<i>Agar logotip bo'lmasa, '🔙 Orqaga' tugmasini bosing</i>", 
+                          reply_markup=create_back_button())
+    bot.register_next_step_handler(msg, process_startup_logo, data)
+
+def process_startup_logo(message, data):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        data['logo'] = None
+        msg = bot.send_message(message.chat.id, 
+                              "4️⃣ <b>Guruh yoki kanal havolasini kiriting:</b>\n\n"
+                              "Startap uchun Telegram guruh yoki kanal havolasi:\n"
+                              "Masalan: <code>https://t.me/startaphub_group</code>\n\n"
+                              "<i>Majburiy - a'zolar guruhga qo'shilishi uchun</i>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_group_link, data)
+        return
+    
+    if message.photo:
+        data['logo'] = message.photo[-1].file_id
+        msg = bot.send_message(message.chat.id, 
+                              "4️⃣ <b>Guruh yoki kanal havolasini kiriting:</b>\n\n"
+                              "Startap uchun Telegram guruh yoki kanal havolasi:\n"
+                              "Masalan: <code>https://t.me/startaphub_group</code>\n\n"
+                              "<i>Majburiy - a'zolar guruhga qo'shilishi uchun</i>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_group_link, data)
+    else:
+        msg = bot.send_message(message.chat.id, "⚠️ <b>Iltimos, rasm yuboring yoki '🔙 Orqaga' tugmasini bosing!</b>", reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_logo, data)
+
+def process_startup_group_link(message, data):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_main_menu(message)
+        return
+    
+    if not ('t.me/' in message.text or 'telegram.me/' in message.text):
+        msg = bot.send_message(message.chat.id, 
+                              "⚠️ <b>Noto'g'ri havola format!</b>\n\n"
+                              "Iltimos, Telegram guruh yoki kanal havolasini kiriting:\n"
+                              "<code>https://t.me/groupname</code>\n\n"
+                              "Yoki '🔙 Orqaga' tugmasini bosing:", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_startup_group_link, data)
+        return
+    
+    data['group_link'] = message.text
+    startup_id = create_startup(
+        data['name'],
+        data['description'],
+        data.get('logo'),
+        data['group_link'],
+        data['owner_id']
+    )
+    
+    if not startup_id:
+        bot.send_message(message.chat.id, 
+                        "❌ <b>Startap yaratishda xatolik yuz berdi!</b>\n\n"
+                        "Iltimos, keyinroq qayta urinib ko'ring.", 
+                        reply_markup=create_back_button())
+        clear_user_state(user_id)
+        show_main_menu(message)
+        return
+    
+    # Send to admin for approval
+    startup = get_startup(startup_id)
+    user = get_user(data['owner_id'])
+    owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+    
+    text = (
+        f"🆕 <b>Yangi startap yaratildi!</b>\n\n"
+        f"🎯 <b>Nomi:</b> {startup['name']}\n"
+        f"📌 <b>Tavsif:</b> {startup['description'][:300]}...\n"
+        f"👤 <b>Asoschi:</b> {owner_name}\n"
+        f"👤 <b>Asoschi ID:</b> {data['owner_id']}\n"
+        f"🔗 <b>Guruh havolasi:</b> {startup['group_link']}"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton('✅ Tasdiqlash', callback_data=f'admin_approve_{startup_id}'),
+        InlineKeyboardButton('❌ Rad etish', callback_data=f'admin_reject_{startup_id}'),
+        InlineKeyboardButton('👤 Asoschi profil', callback_data=f'admin_view_user_{data["owner_id"]}')
+    )
+    
+    try:
+        if startup.get('logo'):
+            bot.send_photo(ADMIN_ID, startup['logo'], caption=text, reply_markup=markup)
+        else:
+            bot.send_message(ADMIN_ID, text, reply_markup=markup)
+    except Exception as e:
+        logging.error(f"Adminga xabar yuborishda xatolik: {e}")
+    
+    bot.send_message(message.chat.id, 
+                    "✅ <b>Startap yaratildi va tekshiruvga yuborildi!</b>\n\n"
+                    "⏳ <i>Administrator startapni tekshirgandan so'ng u faollashtiriladi va kanalga joylanadi.</i>\n\n"
+                    "📩 <b>Holat haqida xabar olasiz.</b>", 
+                    reply_markup=create_back_button())
+    
+    clear_user_state(user_id)
+    show_main_menu(message)
+
+# ADMIN PANEL (Yangilangan)
+@bot.message_handler(func=lambda message: message.text == '⚙️ Admin panel' and message.chat.id == ADMIN_ID)
+def admin_panel(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'in_admin_panel')
+    
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        KeyboardButton('📊 Statistika paneli'),
+        KeyboardButton('🚀 Startaplar boshqaruvi'),
+        KeyboardButton('👤 Foydalanuvchilar'),
+        KeyboardButton('📢 Hammaga xabar'),
+        KeyboardButton('⚙️ Sozlamalar'),
+        KeyboardButton('🔙 Asosiy menyu')
+    )
+    
+    stats = get_statistics()
+    
+    welcome_text = (
+        f"⚙️ <b>Admin boshqaruv paneli</b>\n\n"
+        f"📊 <b>Statistika:</b>\n"
+        f"├ 👥 Foydalanuvchilar: <b>{stats['total_users']}</b> ta\n"
+        f"├ 🚀 Startaplar: <b>{stats['total_startups']}</b> ta\n"
+        f"├ ⏳ Kutilayotgan: <b>{stats['pending_startups']}</b> ta\n"
+        f"├ ▶️ Faol: <b>{stats['active_startups']}</b> ta\n"
+        f"└ ✅ Yakunlangan: <b>{stats['completed_startups']}</b> ta"
+    )
+    
+    bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == '📊 Statistika paneli' and message.chat.id == ADMIN_ID)
+def admin_dashboard(message):
+    stats = get_statistics()
+    recent_users = get_recent_users(5)
+    recent_startups = get_recent_startups(5)
+    
+    dashboard_text = (
+        f"📊 <b>Statistika paneli</b>\n\n"
+        f"📈 <b>Umumiy statistika:</b>\n"
+        f"├ 👥 Foydalanuvchilar: <b>{stats['total_users']}</b> ta\n"
+        f"├ 🚀 Startaplar: <b>{stats['total_startups']}</b> ta\n"
+        f"├ ⏳ Kutilayotgan: <b>{stats['pending_startups']}</b> ta\n"
+        f"├ ▶️ Faol: <b>{stats['active_startups']}</b> ta\n"
+        f"├ ✅ Yakunlangan: <b>{stats['completed_startups']}</b> ta\n"
+        f"└ ❌ Rad etilgan: <b>{stats['rejected_startups']}</b> ta\n\n"
+    )
+    
+    # Recent users
+    if recent_users:
+        dashboard_text += f"👥 <b>Oxirgi qo'shilganlar:</b>\n"
+        for i, user in enumerate(recent_users, 1):
+            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+            if not name:
+                name = "Noma'lum"
+            dashboard_text += f"{i}. {name}\n"
+        dashboard_text += "\n"
+    
+    # Recent startups
+    if recent_startups:
+        dashboard_text += f"🚀 <b>Oxirgi startaplar:</b>\n"
+        for i, startup in enumerate(recent_startups, 1):
+            status_emoji = {
+                'pending': '⏳',
+                'active': '▶️',
+                'completed': '✅',
+                'rejected': '❌'
+            }.get(startup['status'], '❓')
+            dashboard_text += f"{i}. {startup['name']} {status_emoji}\n"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton('🔄 Yangilash', callback_data='refresh_dashboard'),
+        InlineKeyboardButton('📈 Toliq statistika', callback_data='full_stats'),
+        InlineKeyboardButton('📊 Grafiklar', callback_data='show_charts'),
+        InlineKeyboardButton('🔙 Admin panel', callback_data='back_to_admin_panel')
+    )
+    
+    bot.send_message(message.chat.id, dashboard_text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == '🚀 Startaplar boshqaruvi' and message.chat.id == ADMIN_ID)
+def admin_startups_menu(message):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton('⏳ Tasdiq kutilayotgan', callback_data='pending_startups_1'),
+        InlineKeyboardButton('▶️ Faol startaplar', callback_data='active_startups_1'),
+        InlineKeyboardButton('✅ Yakunlanganlar', callback_data='completed_startups_1'),
+        InlineKeyboardButton('❌ Rad etilganlar', callback_data='rejected_startups_1'),
+        InlineKeyboardButton('📋 Barcha startaplar', callback_data='all_startups_1'),
+        InlineKeyboardButton('🔙 Admin panel', callback_data='back_to_admin_panel')
+    )
+    
+    stats = get_statistics()
+    text = (
+        f"🚀 <b>Startaplar boshqaruvi</b>\n\n"
+        f"📊 <b>Statistika:</b>\n"
+        f"├ ⏳ Tasdiq kutilayotgan: <b>{stats['pending_startups']}</b> ta\n"
+        f"├ ▶️ Faol: <b>{stats['active_startups']}</b> ta\n"
+        f"├ ✅ Yakunlangan: <b>{stats['completed_startups']}</b> ta\n"
+        f"└ ❌ Rad etilgan: <b>{stats['rejected_startups']}</b> ta"
+    )
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('pending_startups_'))
+def show_pending_startups(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    page = int(call.data.split('_')[2])
+    startups, total = get_pending_startups(page)
+    
+    if not startups:
+        text = "⏳ <b>Hozircha tasdiq kutilayotgan startaplar yo'q.</b>"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton('🔙 Startaplar boshqaruviga', callback_data='back_to_admin_startups'))
+    else:
+        total_pages = max(1, (total + 4) // 5)
+        text = f"⏳ <b>Tasdiq kutilayotgan startaplar</b>\n📄 Sahifa: <b>{page}/{total_pages}</b>\n\n"
+        
+        for i, startup in enumerate(startups, start=(page-1)*5+1):
+            user = get_user(startup['owner_id'])
+            owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+            text += f"{i}. <b>{startup['name']}</b>\n   👤 {owner_name}\n\n"
+        
+        markup = InlineKeyboardMarkup()
+        
+        # Page navigation
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton('⬅️', callback_data=f'pending_startups_{page-1}'))
+        
+        nav_buttons.append(InlineKeyboardButton(f'{page}/{total_pages}', callback_data='current_page'))
+        
+        if page < total_pages:
+            nav_buttons.append(InlineKeyboardButton('➡️', callback_data=f'pending_startups_{page+1}'))
+        
+        if nav_buttons:
+            markup.row(*nav_buttons)
+        
+        # Startup selection
+        for i, startup in enumerate(startups):
+            markup.add(InlineKeyboardButton(f'{i+1}. {startup["name"][:20]}...', 
+                                           callback_data=f'admin_view_startup_{startup["_id"]}'))
+        
+        markup.add(InlineKeyboardButton('🔙 Startaplar boshqaruviga', callback_data='back_to_admin_startups'))
+    
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+    except:
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_view_startup_'))
+def admin_view_startup_details(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    try:
+        startup_id = call.data.split('_')[3]
+        startup = get_startup(startup_id)
+        
+        if not startup:
+            bot.answer_callback_query(call.id, "❌ Startap topilmadi!", show_alert=True)
+            return
+        
+        user = get_user(startup['owner_id'])
+        owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+        owner_contact = f"@{user.get('username', '')}" if user and user.get('username') else f"ID: {startup['owner_id']}"
+        
+        created_date = startup.get('created_at', '—')
+        if created_date and created_date != '—' and isinstance(created_date, datetime):
+            created_date = created_date.strftime('%d/%m/%Y %H:%M')
+        
+        text = (
+            f"🖼 <b>Startap tafsilotlari</b>\n\n"
+            f"🎯 <b>Nomi:</b> {startup['name']}\n"
+            f"📌 <b>Tavsif:</b> {startup['description']}\n\n"
+            f"👤 <b>Asoschi:</b> {owner_name}\n"
+            f"📱 <b>Aloqa:</b> {owner_contact}\n"
+            f"🔗 <b>Guruh havolasi:</b> {startup['group_link']}\n"
+            f"📅 <b>Yaratilgan sana:</b> {created_date}\n"
+            f"📊 <b>Holati:</b> {startup['status']}"
+        )
+        
+        markup = InlineKeyboardMarkup()
+        
+        if startup['status'] == 'pending':
+            markup.add(
+                InlineKeyboardButton('✅ Tasdiqlash va faollashtirish', callback_data=f'admin_approve_{startup_id}'),
+                InlineKeyboardButton('❌ Rad etish', callback_data=f'admin_reject_{startup_id}')
+            )
+        elif startup['status'] == 'active':
+            markup.add(InlineKeyboardButton('✅ Faol (tugmani bosib o\'zgartirish mumkin)', callback_data='already_active'))
+        elif startup['status'] == 'completed':
+            markup.add(InlineKeyboardButton('✅ Yakunlangan', callback_data='already_completed'))
+        elif startup['status'] == 'rejected':
+            markup.add(InlineKeyboardButton('❌ Rad etilgan (qayta ko\'rib chiqish)', callback_data=f'admin_review_{startup_id}'))
+        
+        markup.add(InlineKeyboardButton('👥 A\'zolar ro\'yxati', callback_data=f'admin_view_members_{startup_id}'))
+        markup.add(InlineKeyboardButton('🔙 Tasdiq kutilayotganlar', callback_data='pending_startups_1'))
+        
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        
+        if startup.get('logo'):
+            bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+        else:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Admin view startup xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_approve_'))
+def admin_approve_startup(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    try:
+        startup_id = call.data.split('_')[2]
+        update_startup_status(startup_id, 'active')
+        
+        # Notify owner
+        startup = get_startup(startup_id)
+        if startup:
+            try:
+                bot.send_message(
+                    startup['owner_id'],
+                    f"🎉 <b>Tabriklaymiz! Startapingiz tasdiqlandi!</b>\n\n"
+                    f"✅ '<b>{startup['name']}</b>' startapingiz tasdiqlandi va kanalda e'lon qilindi!\n\n"
+                    f"👥 Endi foydalanuvchilar startapingizga qo'shilishi mumkin.\n"
+                    f"📊 Startapni boshqarish uchun '📋 Mening startaplarim' bo'limidan foydalaning."
+                )
+            except:
+                pass
+        
+        # Post to channel
+        try:
+            user = get_user(startup['owner_id'])
+            owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+            
+            channel_text = (
+                f"🚀 <b>YANGI STARTAP: {startup['name']}</b>\n\n"
+                f"📝 {startup['description']}\n\n"
+                f"👤 <b>Asoschi:</b> {owner_name}\n\n"
+                f"👉 <b>Startapga qo'shilish va hamkorlik qilish uchun quyidagi tugmani bosing:</b>\n"
+                f"➕ <b>O'z startapingizni yaratish uchun:</b> @{bot.get_me().username}"
+            )
+            
+            markup = InlineKeyboardMarkup()
+            markup.add(
+                InlineKeyboardButton('🤝 Startapga qo\'shilish', callback_data=f'join_startup_{startup_id}'),
+                InlineKeyboardButton('🔗 Guruhga o\'tish', url=startup['group_link'])
+            )
+            
+            if startup.get('logo'):
+                bot.send_photo(CHANNEL_USERNAME, startup['logo'], caption=channel_text, reply_markup=markup)
+            else:
+                bot.send_message(CHANNEL_USERNAME, channel_text, reply_markup=markup)
+        except Exception as e:
+            logging.error(f"Kanalga post yuborishda xatolik: {e}")
+        
+        try:
+            bot.send_message(call.message.chat.id, "✅ <b>Startap tasdiqlandi, faollashtirildi va kanalda e'lon qilindi!</b>")
+        except:
+            pass
+        
+        bot.answer_callback_query(call.id, "✅ Startap tasdiqlandi va faollashtirildi!")
+        
+        # Go back to pending startups
+        show_pending_startups(call)
+        
+    except Exception as e:
+        logging.error(f"Admin approve xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_reject_'))
+def admin_reject_startup(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    try:
+        startup_id = call.data.split('_')[2]
+        update_startup_status(startup_id, 'rejected')
+        
+        # Notify owner
+        startup = get_startup(startup_id)
+        if startup:
+            try:
+                bot.send_message(
+                    startup['owner_id'],
+                    f"❌ <b>Startapingiz rad etildi</b>\n\n"
+                    f"<b>{startup['name']}</b> startapingiz quyidagi sabablarga ko'ra rad etildi:\n\n"
+                    f"1. Noto'g'ri ma'lumotlar\n"
+                    f"2. Platforma qoidalariga mos kelmaslik\n"
+                    f"3. Yaroqsiz guruh havolasi\n\n"
+                    f"⚠️ Qoidalarni qayta o'qib, yangi startap yarating."
+                )
+            except:
+                pass
+        
+        try:
+            bot.send_message(call.message.chat.id, "❌ <b>Startap rad etildi va egasiga xabar yuborildi.</b>")
+        except:
+            pass
+        
+        bot.answer_callback_query(call.id, "❌ Startap rad etildi!")
+        
+        # Go back to pending startups
+        show_pending_startups(call)
+        
+    except Exception as e:
+        logging.error(f"Admin reject xatosi: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.message_handler(func=lambda message: message.text == '👤 Foydalanuvchilar' and message.chat.id == ADMIN_ID)
+def admin_users(message):
+    stats = get_statistics()
+    recent_users = get_recent_users(10)
+    
+    text = (
+        f"👤 <b>Foydalanuvchilar boshqaruvi</b>\n\n"
+        f"📊 <b>Umumiy foydalanuvchilar:</b> <b>{stats['total_users']}</b> ta\n\n"
+        f"📋 <b>Oxirgi qo'shilgan foydalanuvchilar:</b>\n"
+    )
+    
+    for i, user in enumerate(recent_users, 1):
+        joined_date = user.get('joined_at', '—')
+        if joined_date and joined_date != '—':
+            try:
+                if isinstance(joined_date, str):
+                    joined_date = joined_date[:10]
+            except:
+                pass
+        
+        name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+        if not name:
+            name = "Noma'lum"
+        
+        text += f"{i}. <b>{name}</b>\n"
+        text += f"   👤 @{user.get('username', '—')} | 📅 {joined_date}\n\n"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton('📥 Barcha foydalanuvchilar ro\'yxati', callback_data='users_list_1'),
+        InlineKeyboardButton('📊 Foydalanuvchilar statistikasi', callback_data='users_stats'),
+        InlineKeyboardButton('📈 Faollik statistikasi', callback_data='activity_stats'),
+        InlineKeyboardButton('🔙 Admin panel', callback_data='back_to_admin_panel')
+    )
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == '📢 Hammaga xabar' and message.chat.id == ADMIN_ID)
+def broadcast_message_start(message):
+    user_id = message.from_user.id
+    set_user_state(user_id, 'broadcasting_message')
+    
+    msg = bot.send_message(message.chat.id, 
+                          "📢 <b>Hammaga yuboriladigan xabar:</b>\n\n"
+                          "Xabaringizni kiriting (barcha foydalanuvchilarga yuboriladi):\n\n"
+                          "<i>Rasm, video yoki fayl ham jo'natishingiz mumkin</i>",
+                          reply_markup=create_back_button())
+    bot.register_next_step_handler(msg, process_broadcast_message)
+
+def process_broadcast_message(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        admin_panel(message)
+        return
+    
+    text = message.text
+    users = get_all_users()
+    
+    bot.send_message(message.chat.id, f"📤 <b>Xabar yuborilmoqda...</b>\n\nFoydalanuvchilar: {len(users)} ta")
+    
+    success = 0
+    fail = 0
+    
+    for user_id in users:
+        try:
+            # Check message type and send accordingly
+            if message.photo:
+                bot.send_photo(user_id, message.photo[-1].file_id, caption=text if text else None)
+            elif message.video:
+                bot.send_video(user_id, message.video.file_id, caption=text if text else None)
+            elif message.document:
+                bot.send_document(user_id, message.document.file_id, caption=text if text else None)
+            else:
+                bot.send_message(user_id, f"📢 <b>Platformadan yangilik!</b>\n\n{text}")
+            
+            success += 1
+            time.sleep(0.05)  # To avoid flood limit
+        except Exception as e:
+            fail += 1
+    
+    bot.send_message(
+        message.chat.id,
+        f"✅ <b>Xabar yuborish yakunlandi!</b>\n\n"
+        f"✅ Muvaffaqiyatli: {success} ta\n"
+        f"❌ Muvaffaqiyatsiz: {fail} ta\n\n"
+        f"📊 Umumiy foiz: {success/(success+fail)*100:.1f}%"
+    )
+    
+    clear_user_state(message.from_user.id)
+    admin_panel(message)
+
+@bot.message_handler(func=lambda message: message.text == '⚙️ Sozlamalar' and message.chat.id == ADMIN_ID)
+def admin_settings(message):
+    text = (
+        f"⚙️ <b>Admin sozlamalari</b>\n\n"
+        f"🔧 <b>Bot ma'lumotlari:</b>\n"
+        f"├ 🤖 Bot: @{bot.get_me().username}\n"
+        f"├ 👨‍💼 Admin ID: {ADMIN_ID}\n"
+        f"├ 📢 Kanal: {CHANNEL_USERNAME}\n"
+        f"└ 🗄️ Database: MongoDB\n\n"
+        f"📊 <b>Texnik ma'lumotlar:</b>\n"
+        f"├ 📁 Database: {os.getenv('DATABASE_NAME', 'garajhub')}\n"
+        f"├ 🚀 Versiya: 3.0 (MongoDB)\n"
+        f"└ 🔄 Oxirgi yangilanish: {datetime.now().strftime('%d/%m/%Y')}"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton('🔄 Database yangilash', callback_data='refresh_db'),
+        InlineKeyboardButton('💾 Backup olish', callback_data='backup_db'),
+        InlineKeyboardButton('📊 Log fayllar', callback_data='view_logs'),
+        InlineKeyboardButton('🔙 Admin panel', callback_data='back_to_admin_panel')
+    )
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+# Callback query handlers
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_admin_panel')
+def handle_back_to_admin_panel(call):
+    admin_panel(call.message)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_admin_startups')
+def handle_back_to_admin_startups(call):
+    admin_startups_menu(call.message)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'refresh_dashboard')
+def handle_refresh_dashboard(call):
+    admin_dashboard(call.message)
+    bot.answer_callback_query(call.id, "🔄 Statistika yangilandi!")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'full_stats')
+def handle_full_stats(call):
+    stats = get_statistics()
+    bot.answer_callback_query(call.id, 
+                             f"📊 To'liq statistika:\n\n"
+                             f"👥 Foydalanuvchilar: {stats['total_users']}\n"
+                             f"🚀 Startaplar: {stats['total_startups']}\n"
+                             f"⏳ Kutilayotgan: {stats['pending_startups']}\n"
+                             f"▶️ Faol: {stats['active_startups']}\n"
+                             f"✅ Yakunlangan: {stats['completed_startups']}\n"
+                             f"❌ Rad etilgan: {stats['rejected_startups']}", 
+                             show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'refresh_db')
+def handle_refresh_db(call):
+    init_db()
+    bot.answer_callback_query(call.id, "✅ Database indexlari yangilandi!")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'backup_db')
+def handle_backup_db(call):
+    bot.answer_callback_query(call.id, "⏳ Backup tayyorlanmoqda...")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'users_list_1')
+def handle_users_list(call):
+    bot.answer_callback_query(call.id, "⏳ Ro'yxat tayyorlanmoqda...")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'users_stats')
+def handle_users_stats(call):
+    stats = get_statistics()
+    bot.answer_callback_query(call.id, 
+                             f"👥 Foydalanuvchilar: {stats['total_users']}\n"
+                             f"🚀 Startaplar: {stats['total_startups']}", 
+                             show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_main_menu')
+def handle_back_to_main_menu(call):
+    show_main_menu(call)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data in ['already_active', 'already_completed', 'already_rejected', 
+                                                          'rejected_info', 'waiting_approval', 'current_page',
+                                                          'show_charts', 'activity_stats', 'view_logs',
+                                                          'admin_review_', 'admin_view_members_', 'admin_view_user_'])
+def handle_info_callbacks(call):
+    bot.answer_callback_query(call.id)
+
+# Orqaga tugmasi uchun umumiy handler
+@bot.message_handler(func=lambda message: message.text in ['🔙 Orqaga', '🔙 Asosiy menyu'])
+def handle_back_button(message):
+    user_id = message.from_user.id
+    user_state = get_user_state(user_id)
+    
+    if user_state == 'in_profile' or user_state.startswith('editing_'):
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    elif user_state == 'viewing_startups':
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    elif user_state == 'viewing_my_startups':
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    elif user_state.startswith('completing_startup_'):
+        startup_id = user_state.split('_')[2]
+        clear_user_state(user_id)
+        
+        startup = get_startup(startup_id)
+        if startup:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton('🔙 Startapga qaytish', callback_data=f'view_startup_{startup_id}'))
+            bot.send_message(message.chat.id, f"🔙 <b>Startapga qaytish:</b> {startup['name']}", reply_markup=markup)
+    
+    elif user_state == 'creating_startup':
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    elif user_state == 'in_admin_panel' or user_state == 'broadcasting_message':
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    else:
+        show_main_menu(message)
+
+# To'liq umumiy handler
+@bot.message_handler(func=lambda message: True)
+def handle_other_messages(message):
+    try:
+        if message.chat.id == ADMIN_ID and message.text not in ('🔙 Orqaga', '🔙 Asosiy menyu', '⚙️ Admin panel'):
+            admin_panel(message)
+            return
+
+        if message.text in ['🔙 Orqaga', '🔙 Asosiy menyu']:
+            handle_back_button(message)
+            return
+
+        show_main_menu(message)
+    except Exception as e:
+        logging.error(f"Unhandled message error: {e}")
+
+# Botni ishga tushirish
+if __name__ == '__main__':
+    init_db()
+    print("=" * 60)
+    print("🚀 StartapHub Bot (MongoDB versiyasi) ishga tushdi...")
+    print(f"👨‍💼 Admin ID: {ADMIN_ID}")
+    print(f"📢 Kanal: {CHANNEL_USERNAME}")
+    try:
+        print(f"🤖 Bot: @{bot.get_me().username}")
+    except:
+        print("🤖 Bot: (get_me() failed)")
+    print(f"🗄️ Database: MongoDB")
+    print("=" * 60)
+    
+    while True:
+        try:
+            try:
+                bot.remove_webhook()
+            except:
+                pass
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except apihelper.ApiTelegramException as e:
+            if hasattr(e, 'result_json') and isinstance(e.result_json, dict) and e.result_json.get('error_code') == 409 or '409' in str(e):
+                logging.error(f"Telegram 409 conflict: {e}. Removing webhook and retrying...")
+                try:
+                    bot.remove_webhook()
+                except:
+                    pass
+                time.sleep(5)
+                continue
+            else:
+                logging.error(f"TeleBot ApiTelegramException: {e}")
+                time.sleep(5)
+                continue
+        except Exception as e:
+            logging.error(f"Botda xatolik: {e}")
+            time.sleep(5)
+            continue
