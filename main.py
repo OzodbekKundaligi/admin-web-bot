@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot tokenini environmentdan olish
-BOT_TOKEN = os.getenv('BOT_TOKEN', '8468261643:AAE3us01znFjgyfLLzOmOxT3cFsSMaKyif8')
-CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', '@GarajHub_test')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8545746982:AAGEpdWQ0jSfQh2uBZ5Qw9ZEOTIAwfLu8zU')
+CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', '@GarajHub_uz')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '7903688837'))
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode='HTML')
