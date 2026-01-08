@@ -55,7 +55,7 @@ def create_back_button():
     markup.add(KeyboardButton('🔙 Orqaga'))
     return markup
 
-# Asosiy menyu tugmalari
+# Asosiy menyu tugmalari - MATNLAR O'ZGARTIRILDI
 def create_main_menu(user_id: int):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
@@ -71,29 +71,20 @@ def create_main_menu(user_id: int):
     
     return markup
 
-# ==================== 1. START & OBUNA TEKSHIRISH ====================
-
+# 1. START - KANALGA OBUNA TEKSHIRISH
 @bot.message_handler(commands=['start', 'help', 'boshlash'])
 def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or ""
     
-    # Foydalanuvchini bazaga saqlash (telefon raqamsiz)
     save_user(user_id, username, first_name)
     
     # Kanalga obuna tekshirish
     try:
         chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         if chat_member.status in ['member', 'administrator', 'creator']:
-            # Obuna bo'lsa, ro'yxatdan o'tganligini tekshirish
-            user = get_user(user_id)
-            if user and user.get('phone'):
-                # Ro'yxatdan o'tgan foydalanuvchi
-                welcome_back_message(message, user)
-            else:
-                # Yangi foydalanuvchi - ro'yxatdan o'tishni boshlash
-                start_registration(message)
+            show_main_menu(message)
         else:
             ask_for_subscription(message)
     except Exception as e:
@@ -101,35 +92,25 @@ def start_command(message):
         ask_for_subscription(message)
 
 def ask_for_subscription(message):
-    """Kanalga obuna bo'lishni so'rash"""
     markup = InlineKeyboardMarkup()
     markup.row(
-        InlineKeyboardButton('📢 Kanalga obuna bo\'lish', url=f'https://t.me/{CHANNEL_USERNAME[1:]}'),
-        InlineKeyboardButton('🔄 Tekshirish', callback_data='check_subscription')
+        InlineKeyboardButton('🔗 Kanalga o\'tish', url=f'https://t.me/{CHANNEL_USERNAME[1:]}'),
+        InlineKeyboardButton('✅ Tekshirish', callback_data='check_subscription')
     )
-    
     bot.send_message(
         message.chat.id,
-        "❗ <b>Davom etish uchun kanalimizga obuna bo'ling!</b>\n\n"
+        "🤖 <b>GarajHub Bot</b>\n\n"
         "Botdan foydalanish uchun avval kanalimizga obuna bo'ling 👇",
         reply_markup=markup
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == 'check_subscription')
 def check_subscription_callback(call):
-    """Obunani tekshirish"""
     user_id = call.from_user.id
     try:
         chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         if chat_member.status in ['member', 'administrator', 'creator']:
-            # Obuna bo'lsa, ro'yxatdan o'tganligini tekshirish
-            user = get_user(user_id)
-            if user and user.get('phone'):
-                # Ro'yxatdan o'tgan foydalanuvchi
-                welcome_back_message(call.message, user)
-            else:
-                # Yangi foydalanuvchi
-                start_registration(call.message)
+            show_main_menu(call)
             bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi!")
         else:
             bot.answer_callback_query(call.id, "❌ Iltimos, kanalga obuna bo'ling!", show_alert=True)
@@ -137,108 +118,7 @@ def check_subscription_callback(call):
         logging.error(f"Obuna tekshirishda xatolik: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
-def welcome_back_message(message, user):
-    """Ro'yxatdan o'tgan foydalanuvchini qabul qilish"""
-    # Xabarni yuborish
-    welcome_text = (
-        f"👋 <b>Qaytganingiz bilan, {user.get('first_name', 'Foydalanuvchi')}!</b>\n\n"
-        f"Asosiy menyuga xush kelibsiz.\n\n"
-        f"Quyidagilardan birini tanlang:"
-    )
-    
-    if isinstance(message, types.Message):
-        user_id = message.from_user.id
-        chat_id = message.chat.id
-    else:
-        user_id = message.from_user.id
-        chat_id = message.chat.id
-        # CallbackQuery bo'lsa, eski xabarni o'chirish
-        try:
-            bot.delete_message(chat_id, message.message_id)
-        except:
-            pass
-    
-    bot.send_message(chat_id, welcome_text, reply_markup=create_main_menu(user_id))
-
-def start_registration(message):
-    """Yangi foydalanuvchini ro'yxatdan o'tkazish"""
-    user_id = message.from_user.id
-    
-    # Telefon raqam so'rash
-    registration_text = (
-        "👋 <b>Xush kelibsiz!</b>\n\n"
-        "Davom etish uchun iltimos,\n"
-        "📱 telefon raqamingizni yuboring."
-    )
-    
-    # Telefon raqam tugmasi bilan keyboard
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
-    
-    if isinstance(message, types.Message):
-        try:
-            msg = bot.send_message(message.chat.id, registration_text, reply_markup=markup)
-            bot.register_next_step_handler(msg, process_contact_step)
-        except Exception as e:
-            logging.error(f"Registration xatosi: {e}")
-    else:
-        # Agar CallbackQuery bo'lsa
-        try:
-            bot.delete_message(message.chat.id, message.message_id)
-        except:
-            pass
-        try:
-            msg = bot.send_message(message.chat.id, registration_text, reply_markup=markup)
-            bot.register_next_step_handler(msg, process_contact_step)
-        except Exception as e:
-            logging.error(f"Registration xatosi: {e}")
-
-def process_contact_step(message):
-    """Telefon raqamni qabul qilish"""
-    user_id = message.from_user.id
-    
-    if message.contact:
-        # Telefon raqamni saqlash
-        phone_number = message.contact.phone_number
-        
-        # + bilan boshlanmasa qo'shamiz
-        if not phone_number.startswith('+'):
-            phone_number = '+' + phone_number
-        
-        # Telefon raqamni saqlash
-        update_user_field(user_id, 'phone', phone_number)
-        
-        # Ism va familiyani ham saqlash (agar contactda bo'lsa)
-        if message.contact.first_name:
-            update_user_field(user_id, 'first_name', message.contact.first_name)
-        if message.contact.last_name:
-            update_user_field(user_id, 'last_name', message.contact.last_name)
-        
-        # Ro'yxatdan o'tish muvaffaqiyatli
-        success_text = (
-            "✅ <b>Siz muvaffaqiyatli ro'yxatdan o'tdingiz!</b>\n\n"
-            "Quyidagi tugmalar orqali bot funksiyalaridan foydalanishingiz mumkin:"
-        )
-        
-        # Asosiy menyuni ko'rsatish
-        bot.send_message(message.chat.id, success_text, reply_markup=create_main_menu(user_id))
-    else:
-        # Telefon raqam yuborilmagan bo'lsa
-        registration_text = (
-            "❌ <b>Telefon raqam yuborilmadi!</b>\n\n"
-            "Davom etish uchun iltimos,\n"
-            "📱 telefon raqamingizni yuboring."
-        )
-        
-        # Telefon raqam tugmasi bilan keyboard
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
-        
-        msg = bot.send_message(message.chat.id, registration_text, reply_markup=markup)
-        bot.register_next_step_handler(msg, process_contact_step)
-
 def show_main_menu(message_or_call):
-    """Asosiy menyuni ko'rsatish"""
     if isinstance(message_or_call, types.CallbackQuery):
         chat_id = message_or_call.message.chat.id
         message_id = message_or_call.message.message_id
@@ -246,38 +126,28 @@ def show_main_menu(message_or_call):
             bot.delete_message(chat_id, message_id)
         except:
             pass
-        user_id = message_or_call.from_user.id
     else:
         chat_id = message_or_call.chat.id
-        user_id = message_or_call.from_user.id
     
+    user_id = message_or_call.from_user.id if isinstance(message_or_call, types.CallbackQuery) else message_or_call.from_user.id
     clear_user_state(user_id)
-    
-    # Telefon raqami borligini tekshirish
-    user = get_user(user_id)
-    if not user or not user.get('phone'):
-        # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-        start_registration(message_or_call)
-        return
     
     text = "👋 <b>Assalomu alaykum!</b>\n\n🚀 <b>GarajHub</b> — startaplar uchun platforma.\n\nQuyidagilardan birini tanlang:"
     
     bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
 
-# ==================== 2. PROFIL ====================
-
+# 2. PROFIL (Yangilangan)
 @bot.message_handler(func=lambda message: message.text == '👤 Profil')
 def show_profile(message):
     user_id = message.from_user.id
-    
-    # Telefon raqami borligini tekshirish
-    user = get_user(user_id)
-    if not user or not user.get('phone'):
-        # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-        start_registration(message)
-        return
-    
     set_user_state(user_id, 'in_profile')
+    
+    markup = create_back_button()
+    
+    user = get_user(user_id)
+    if not user:
+        save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
+        user = get_user(user_id)
     
     profile_text = (
         "👤 <b>Profil ma'lumotlari:</b>\n\n"
@@ -299,8 +169,10 @@ def show_profile(message):
         InlineKeyboardButton('🎂 Tug\'ilgan sana', callback_data='edit_birth_date'),
         InlineKeyboardButton('📝 Bio', callback_data='edit_bio')
     )
+    # Add inline back button to avoid sending an extra message with reply keyboard
     markup_inline.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_main_menu'))
 
+    # Faqat bitta xabar yuborish
     bot.send_message(message.chat.id, profile_text, reply_markup=markup_inline)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('edit_'))
@@ -354,7 +226,7 @@ def process_first_name(message):
         return
     
     update_user_field(user_id, 'first_name', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli saqlandi</b>")
+    bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli saqlandi</b>", reply_markup=create_back_button())
     show_profile(message)
 
 def process_last_name(message):
@@ -366,7 +238,7 @@ def process_last_name(message):
         return
     
     update_user_field(user_id, 'last_name', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>")
+    bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>", reply_markup=create_back_button())
     show_profile(message)
 
 def process_phone(message):
@@ -378,7 +250,7 @@ def process_phone(message):
         return
     
     update_user_field(user_id, 'phone', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Telefon raqami muvaffaqiyatli saqlandi</b>")
+    bot.send_message(message.chat.id, "✅ <b>Telefon raqami muvaffaqiyatli saqlandi</b>", reply_markup=create_back_button())
     show_profile(message)
 
 @bot.callback_query_handler(func=lambda call: call.data in ['gender_male', 'gender_female'])
@@ -387,7 +259,11 @@ def process_gender(call):
     gender = 'Erkak' if call.data == 'gender_male' else 'Ayol'
     update_user_field(user_id, 'gender', gender)
     
-    bot.send_message(call.message.chat.id, "✅ <b>Jins muvaffaqiyatli saqlandi</b>")
+    # O'rniga yangi xabar yuborish
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "✅ <b>Jins muvaffaqiyatli saqlandi</b>", reply_markup=create_back_button())
+    
+    # Profilni qayta ko'rsatish
     show_profile(call.message)
     bot.answer_callback_query(call.id)
 
@@ -405,7 +281,7 @@ def process_birth_date(message):
         return
     
     update_user_field(user_id, 'birth_date', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sana muvaffaqiyatli saqlandi</b>")
+    bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sana muvaffaqiyatli saqlandi</b>", reply_markup=create_back_button())
     show_profile(message)
 
 def process_bio(message):
@@ -417,22 +293,13 @@ def process_bio(message):
         return
     
     update_user_field(user_id, 'bio', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Bio saqlandi</b>")
+    bot.send_message(message.chat.id, "✅ <b>Bio saqlandi</b>", reply_markup=create_back_button())
     show_profile(message)
 
-# ==================== 3. STARTUPLAR ====================
-
+# 3. STARTUPLAR (To'g'rilangan)
 @bot.message_handler(func=lambda message: message.text == '🌐 Startaplar')
 def show_startups(message):
     user_id = message.from_user.id
-    
-    # Telefon raqami borligini tekshirish
-    user = get_user(user_id)
-    if not user or not user.get('phone'):
-        # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-        start_registration(message)
-        return
-    
     set_user_state(user_id, 'viewing_startups')
     
     markup = create_back_button()
@@ -462,7 +329,9 @@ def show_startup_page(chat_id, page):
     )
     
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup["_id"]}'))
+    markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish',
+                               callback_data=f'join_startup_{startup["_id"]}'))
+
 
     nav_buttons = []
     if page > 1:
@@ -536,7 +405,7 @@ def handle_join_startup(call):
                     bot.send_message(startup['owner_id'], text, reply_markup=markup)
                 except Exception as e:
                     logging.error(f"Egaga xabar yuborishda xatolik: {e}")
-                    # Notify admin if owner cannot be messaged
+                    # Notify admin if owner cannot be messaged (owner may not have started bot)
                     try:
                         bot.send_message(ADMIN_ID, f"⚠️ Ownerga xabar yuborilmadi (ID: {startup['owner_id']}) for join request {request_id}. Error: {e}")
                     except:
@@ -614,19 +483,10 @@ def reject_join_request(call):
         logging.error(f"Reject join xatosi: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
-# ==================== 4. MENING STARTUPLARIM ====================
-
+# 4. MENING STARTUPLARIM (To'g'rilangan)
 @bot.message_handler(func=lambda message: message.text == '📌 Mening startaplarim')
 def show_my_startups(message):
     user_id = message.from_user.id
-    
-    # Telefon raqami borligini tekshirish
-    user = get_user(user_id)
-    if not user or not user.get('phone'):
-        # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-        start_registration(message)
-        return
-    
     set_user_state(user_id, 'viewing_my_startups')
     
     markup = create_back_button()
@@ -968,19 +828,10 @@ def process_startup_photo(message, startup_id, results_text):
         msg = bot.send_message(message.chat.id, "🖼 <b>Natijalar rasmini yuboring:</b>", reply_markup=create_back_button())
         bot.register_next_step_handler(msg, process_startup_photo, startup_id, results_text)
 
-# ==================== 5. STARTUP YARATISH ====================
-
+# 5. STARTUP YARATISH
 @bot.message_handler(func=lambda message: message.text == '➕ Startup yaratish')
 def start_creation(message):
     user_id = message.from_user.id
-    
-    # Telefon raqami borligini tekshirish
-    user = get_user(user_id)
-    if not user or not user.get('phone'):
-        # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-        start_registration(message)
-        return
-    
     set_user_state(user_id, 'creating_startup')
     
     markup = create_back_button()
@@ -1101,8 +952,7 @@ def process_startup_group_link(message, data):
     clear_user_state(user_id)
     show_main_menu(message)
 
-# ==================== 6. ADMIN PANEL ====================
-
+# ADMIN PANEL (Yangilangan)
 @bot.message_handler(func=lambda message: message.text == '⚙️ Admin panel' and message.chat.id == ADMIN_ID)
 def admin_panel(message):
     user_id = message.from_user.id
@@ -1331,7 +1181,7 @@ def admin_approve_startup(call):
             except:
                 pass
         
-        # Post to channel
+        # Post to channel (TO'G'RILANGAN - inline tugma bilan)
         try:
             user = get_user(startup['owner_id'])
             owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
@@ -1346,7 +1196,8 @@ def admin_approve_startup(call):
             
             markup = InlineKeyboardMarkup()
             markup.add(
-                InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup_id}')
+                InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup_id}'),
+        
             )
             
             if startup.get('logo'):
@@ -1521,8 +1372,7 @@ def admin_settings(message):
     
     bot.send_message(message.chat.id, text, reply_markup=markup)
 
-# ==================== CALLBACK QUERY HANDLERS ====================
-
+# Callback query handlers
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_admin_panel')
 def handle_back_to_admin_panel(call):
     admin_panel(call.message)
@@ -1583,8 +1433,7 @@ def handle_back_to_main_menu(call):
 def handle_info_callbacks(call):
     bot.answer_callback_query(call.id)
 
-# ==================== ORQAGA TUGMASI HANDLERI ====================
-
+# Orqaga tugmasi uchun umumiy handler
 @bot.message_handler(func=lambda message: message.text == '🔙 Orqaga')
 def handle_back_button(message):
     user_id = message.from_user.id
@@ -1624,50 +1473,23 @@ def handle_back_button(message):
     else:
         show_main_menu(message)
 
-# ==================== UMUMIY HANDLER ====================
-
+# To'liq umumiy handler
 @bot.message_handler(func=lambda message: True)
 def handle_other_messages(message):
     try:
-        # Admin uchun maxsus handler
         if message.chat.id == ADMIN_ID and message.text not in ('🔙 Orqaga', '⚙️ Admin panel'):
             admin_panel(message)
             return
 
-        # Orqaga tugmasi
         if message.text == '🔙 Orqaga':
             handle_back_button(message)
             return
 
-        # Asosiy menyu tugmalari
-        if message.text in ['🌐 Startaplar', '📌 Mening startaplarim', '➕ Startup yaratish', '👤 Profil']:
-            # Avval telefon raqamni tekshirish
-            user_id = message.from_user.id
-            user = get_user(user_id)
-            
-            if not user or not user.get('phone'):
-                # Telefon raqami yo'q bo'lsa, ro'yxatdan o'tishni boshlash
-                start_registration(message)
-                return
-            
-            # Agar telefon raqami bo'lsa, kerakli funksiyani chaqirish
-            if message.text == '🌐 Startaplar':
-                show_startups(message)
-            elif message.text == '📌 Mening startaplarim':
-                show_my_startups(message)
-            elif message.text == '➕ Startup yaratish':
-                start_creation(message)
-            elif message.text == '👤 Profil':
-                show_profile(message)
-            return
-
-        # Boshqa barcha xabarlar uchun
         show_main_menu(message)
     except Exception as e:
         logging.error(f"Unhandled message error: {e}")
 
-# ==================== BOTNI ISHGA TUSHIRISH ====================
-
+# Botni ishga tushirish
 if __name__ == '__main__':
     init_db()
     print("=" * 60)
@@ -1705,3 +1527,5 @@ if __name__ == '__main__':
             logging.error(f"Botda xatolik: {e}")
             time.sleep(5)
             continue
+        
+ 
