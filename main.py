@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot tokenini environmentdan olish
-BOT_TOKEN = os.getenv('BOT_TOKEN', '8545746982:AAGEpdWQ0jSfQh2uBZ5Qw9ZEOTIAwfLu8zU')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8545746982:AAHZ6hFQZgvDsqhGyAV7gt-og2BjXtSOfDc')
 CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', '@GarajHub_uz')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '7903688837'))
 
