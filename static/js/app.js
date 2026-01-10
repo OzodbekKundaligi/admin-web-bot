@@ -1,64 +1,95 @@
-// Asosiy JavaScript fayli
-
-// Global o'zgaruvchilar
+// ==================== GLOBAL O'ZGARUVCHILAR ====================
 let currentUser = null;
-let charts = {};
-let currentPage = 'dashboard';
+let currentPage = 'login';
+let userGrowthChart = null;
+let distributionChart = null;
+let activityChart = null;
+let startupDetailChart = null;
+let lastCheckTime = null;
+let notificationsInterval = null;
 
-// DOM yuklanganda
+// ==================== DOM YUKLANGANDA ====================
 document.addEventListener('DOMContentLoaded', function() {
+    initializeApp();
+});
+
+// ==================== ASOSIY FUNKSIYALAR ====================
+function initializeApp() {
+    // Event listenerlarni sozlash
+    setupEventListeners();
+    
     // Auth tekshirish
     checkAuth();
     
-    // Event listener'lar
-    setupEventListeners();
-    
-    // Dashboard statistikasini yuklash
-    loadDashboard();
-    
     // Loading ekranini yashirish
     setTimeout(() => {
-        document.getElementById('loadingScreen').style.display = 'none';
-    }, 1000);
-});
+        document.getElementById('loadingScreen').style.opacity = '0';
+        setTimeout(() => {
+            document.getElementById('loadingScreen').style.display = 'none';
+        }, 300);
+    }, 500);
+    
+    // Notification auto-check
+    startNotificationChecker();
+    
+    // Offline/Online detection
+    setupConnectionWatcher();
+}
 
-// Auth tekshirish
-async function checkAuth() {
-    try {
-        const response = await fetch('/api/check_auth');
-        const data = await response.json();
-        
-        if (data.authenticated) {
-            currentUser = data.user;
-            showPage('dashboard');
-            updateUserInfo();
-        } else {
-            showPage('login');
+function setupConnectionWatcher() {
+    window.addEventListener('online', () => {
+        showToast('Internet ulandi', 'success');
+        if (currentUser) {
+            loadDashboard();
         }
-    } catch (error) {
-        console.error('Auth tekshirish xatosi:', error);
-        showPage('login');
+    });
+    
+    window.addEventListener('offline', () => {
+        showToast('Internet uzildi', 'error');
+    });
+    
+    // Dastlabki tekshirish
+    if (!navigator.onLine) {
+        showToast('Internet ulanmagan', 'warning');
     }
 }
 
-// Event listener'lar
+// ==================== EVENT LISTENERLAR ====================
 function setupEventListeners() {
     // Login form
-    document.getElementById('loginForm')?.addEventListener('submit', handleLogin);
+    const loginForm = document.getElementById('loginForm');
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleLogin);
+    }
     
     // Logout
-    document.getElementById('logoutBtn')?.addEventListener('click', handleLogout);
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
     
     // Menu items
     document.querySelectorAll('.menu li').forEach(item => {
         item.addEventListener('click', function() {
             const page = this.dataset.page;
-            if (page) {
+            if (page && currentUser) {
                 showPage(page);
                 setActiveMenuItem(page);
+                updateBreadcrumb(page);
             }
         });
     });
+    
+    // Menu toggle (mobil uchun)
+    const menuToggle = document.getElementById('menuToggle');
+    if (menuToggle) {
+        menuToggle.addEventListener('click', function() {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('active');
+            }
+        });
+    }
     
     // Theme toggle
     const themeToggle = document.getElementById('themeToggle');
@@ -72,34 +103,198 @@ function setupEventListeners() {
     }
     
     // Password ko'rish
-    document.getElementById('togglePassword')?.addEventListener('click', function() {
-        const passwordInput = document.getElementById('loginPassword');
-        const icon = this.querySelector('i');
-        if (passwordInput.type === 'password') {
-            passwordInput.type = 'text';
-            icon.classList.remove('fa-eye');
-            icon.classList.add('fa-eye-slash');
-        } else {
-            passwordInput.type = 'password';
-            icon.classList.remove('fa-eye-slash');
-            icon.classList.add('fa-eye');
-        }
+    const togglePassword = document.getElementById('togglePassword');
+    if (togglePassword) {
+        togglePassword.addEventListener('click', function() {
+            const passwordInput = document.getElementById('loginPassword');
+            if (!passwordInput) return;
+            
+            const icon = this.querySelector('i');
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                if (icon) {
+                    icon.classList.remove('fa-eye');
+                    icon.classList.add('fa-eye-slash');
+                }
+            } else {
+                passwordInput.type = 'password';
+                if (icon) {
+                    icon.classList.remove('fa-eye-slash');
+                    icon.classList.add('fa-eye');
+                }
+            }
+        });
+    }
+    
+    // Broadcast form
+    const broadcastForm = document.getElementById('broadcastForm');
+    if (broadcastForm) {
+        broadcastForm.addEventListener('submit', handleBroadcast);
+    }
+    
+    // Broadcast modal form
+    const broadcastFormModal = document.getElementById('broadcastFormModal');
+    if (broadcastFormModal) {
+        broadcastFormModal.addEventListener('submit', handleBroadcastModal);
+    }
+    
+    // Settings form
+    const generalSettingsForm = document.getElementById('generalSettingsForm');
+    if (generalSettingsForm) {
+        generalSettingsForm.addEventListener('submit', handleSettingsSave);
+    }
+    
+    // Add admin form
+    const addAdminForm = document.getElementById('addAdminForm');
+    if (addAdminForm) {
+        addAdminForm.addEventListener('submit', handleAddAdmin);
+    }
+    
+    // Search
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', handleSearch);
+    }
+    
+    const userSearch = document.getElementById('userSearch');
+    if (userSearch) {
+        userSearch.addEventListener('input', debounce(() => loadUsers(1), 500));
+    }
+    
+    const startupSearch = document.getElementById('startupSearch');
+    if (startupSearch) {
+        startupSearch.addEventListener('input', debounce(() => loadStartups(1), 500));
+    }
+    
+    // Settings tabs
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabId = this.dataset.tab;
+            
+            // Tablarni faollashtirish
+            document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Kontentni ko'rsatish
+            document.querySelectorAll('.settings-tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            const tabContent = document.getElementById(tabId + 'Tab');
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+        });
     });
     
-    // Menu toggle (mobil uchun)
-    document.getElementById('menuToggle')?.addEventListener('click', function() {
-        document.querySelector('.sidebar').classList.toggle('active');
+    // Modal overlay click
+    const modalOverlay = document.getElementById('modalOverlay');
+    if (modalOverlay) {
+        modalOverlay.addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+    }
+    
+    // Notification button
+    const notificationBtn = document.getElementById('notificationBtn');
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', showNotifications);
+    }
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', handleKeyboardShortcuts);
+    
+    // Dashboard filter buttons
+    const growthFilter = document.getElementById('growthFilter');
+    if (growthFilter) {
+        growthFilter.addEventListener('change', () => loadUserGrowthChart());
+    }
+    
+    // Activity filter buttons
+    document.querySelectorAll('.activity-filter-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            filterActivity(this.dataset.type);
+        });
     });
+    
+    // User filter
+    const userFilter = document.getElementById('userFilter');
+    if (userFilter) {
+        userFilter.addEventListener('change', () => loadUsers(1));
+    }
+    
+    // Startup filter
+    const startupFilter = document.getElementById('startupFilter');
+    if (startupFilter) {
+        startupFilter.addEventListener('change', () => loadStartups(1));
+    }
+    
+    // Stats period filter
+    const statsPeriod = document.getElementById('statsPeriod');
+    if (statsPeriod) {
+        statsPeriod.addEventListener('change', loadDetailedStatistics);
+    }
+    
+    // Notification settings save
+    const notificationSettingsBtn = document.getElementById('notificationSettingsBtn');
+    if (notificationSettingsBtn) {
+        notificationSettingsBtn.addEventListener('click', saveNotificationSettings);
+    }
+    
+    // Export buttons
+    const exportUsersBtn = document.getElementById('exportUsersBtn');
+    if (exportUsersBtn) {
+        exportUsersBtn.addEventListener('click', exportUsers);
+    }
+    
+    const exportStartupsBtn = document.getElementById('exportStartupsBtn');
+    if (exportStartupsBtn) {
+        exportStartupsBtn.addEventListener('click', exportStartups);
+    }
 }
 
-// Login
+// ==================== AUTH FUNKSIYALARI ====================
+async function checkAuth() {
+    try {
+        showLoading();
+        const response = await fetch('/api/check_auth');
+        const data = await response.json();
+        
+        hideLoading();
+        
+        if (data.authenticated) {
+            currentUser = data.user;
+            showPage('dashboard');
+            updateUserInfo();
+            loadDashboard();
+            startNotificationChecker();
+        } else {
+            showPage('login');
+        }
+    } catch (error) {
+        console.error('Auth tekshirish xatosi:', error);
+        hideLoading();
+        showPage('login');
+        if (navigator.onLine) {
+            showToast('Serverga ulanib bo\'lmadi', 'error');
+        }
+    }
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     
-    const username = document.getElementById('loginUsername').value;
-    const password = document.getElementById('loginPassword').value;
+    const username = document.getElementById('loginUsername')?.value;
+    const password = document.getElementById('loginPassword')?.value;
+    
+    if (!username || !password) {
+        showToast('Login va parolni kiriting', 'error');
+        return;
+    }
     
     try {
+        showLoading();
         const response = await fetch('/api/login', {
             method: 'POST',
             headers: {
@@ -109,22 +304,25 @@ async function handleLogin(e) {
         });
         
         const data = await response.json();
+        hideLoading();
         
         if (data.success) {
             currentUser = data.user;
             showPage('dashboard');
             updateUserInfo();
+            loadDashboard();
             showToast('Muvaffaqiyatli kirildi', 'success');
+            startNotificationChecker();
         } else {
             showToast(data.error || 'Login xatosi', 'error');
         }
     } catch (error) {
         console.error('Login xatosi:', error);
+        hideLoading();
         showToast('Server xatosi', 'error');
     }
 }
 
-// Logout
 async function handleLogout() {
     try {
         const response = await fetch('/api/logout', { method: 'POST' });
@@ -134,13 +332,15 @@ async function handleLogout() {
             currentUser = null;
             showPage('login');
             showToast('Muvaffaqiyatli chiqildi', 'success');
+            stopNotificationChecker();
         }
     } catch (error) {
         console.error('Logout xatosi:', error);
+        showToast('Xatolik yuz berdi', 'error');
     }
 }
 
-// Sahifani ko'rsatish
+// ==================== PAGE MANAGEMENT ====================
 function showPage(pageId) {
     currentPage = pageId;
     
@@ -154,38 +354,42 @@ function showPage(pageId) {
     if (pageElement) {
         pageElement.classList.add('active');
         
-        // Agar dashboard bo'lsa, statistikani yuklash
-        if (pageId === 'dashboard') {
-            loadDashboard();
+        // Sahifa yuklanganda kerakli ma'lumotlarni yuklash
+        switch(pageId) {
+            case 'dashboard':
+                loadDashboard();
+                break;
+            case 'users':
+                loadUsers();
+                break;
+            case 'startups':
+                loadStartups();
+                break;
+            case 'messages':
+                loadMessageHistory();
+                break;
+            case 'statistics':
+                loadDetailedStatistics();
+                break;
+            case 'admins':
+                loadAdmins();
+                break;
+            case 'system':
+                loadSystemHealth();
+                break;
+            case 'settings':
+                loadSettings();
+                break;
         }
-        // Agar foydalanuvchilar sahifasi bo'lsa
-        else if (pageId === 'users') {
-            loadUsers();
-        }
-        // Agar startaplar sahifasi bo'lsa
-        else if (pageId === 'startups') {
-            loadStartups();
-        }
-        // Agar statistika sahifasi bo'lsa
-        else if (pageId === 'statistics') {
-            loadDetailedStatistics();
-        }
-        // Agar adminlar sahifasi bo'lsa
-        else if (pageId === 'admins') {
-            loadAdmins();
-        }
-        // Agar backup sahifasi bo'lsa
-        else if (pageId === 'backup') {
-            loadBackups();
-        }
-        // Agar sozlamalar sahifasi bo'lsa
-        else if (pageId === 'settings') {
-            loadSettings();
-        }
+    }
+    
+    // Mobil menuni yopish
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar && sidebar.classList.contains('active')) {
+        sidebar.classList.remove('active');
     }
 }
 
-// Menu itemni faol qilish
 function setActiveMenuItem(pageId) {
     document.querySelectorAll('.menu li').forEach(item => {
         item.classList.remove('active');
@@ -197,48 +401,147 @@ function setActiveMenuItem(pageId) {
     }
 }
 
-// Dashboard yuklash
+function updateBreadcrumb(pageId) {
+    const breadcrumb = document.querySelector('.breadcrumb');
+    if (!breadcrumb) return;
+    
+    const pageNames = {
+        'dashboard': 'Asosiy panel',
+        'users': 'Foydalanuvchilar',
+        'startups': 'Startaplar',
+        'messages': 'Xabarlar',
+        'statistics': 'Statistika',
+        'admins': 'Adminlar',
+        'system': 'Tizim holati',
+        'settings': 'Sozlamalar'
+    };
+    
+    breadcrumb.innerHTML = `
+        <span class="breadcrumb-item">Boshqaruv paneli</span>
+        <span class="breadcrumb-divider">/</span>
+        <span class="breadcrumb-item active">${pageNames[pageId] || pageId}</span>
+    `;
+}
+
+function updateUserInfo() {
+    if (currentUser) {
+        const adminName = document.getElementById('adminName');
+        const adminEmail = document.getElementById('adminEmail');
+        const adminAvatar = document.getElementById('adminAvatar');
+        
+        if (adminName) adminName.textContent = currentUser.full_name;
+        if (adminEmail) adminEmail.textContent = currentUser.email || (currentUser.username + '@garajhub.uz');
+        if (adminAvatar) adminAvatar.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.full_name)}&background=000&color=fff&bold=true`;
+        
+        // Role badge
+        const roleBadge = document.getElementById('roleBadge');
+        if (roleBadge) {
+            roleBadge.textContent = currentUser.role === 'superadmin' ? 'Super Admin' : 'Admin';
+            roleBadge.className = `role-badge ${currentUser.role}`;
+        }
+    }
+}
+
+// ==================== DASHBOARD FUNKSIYALARI ====================
 async function loadDashboard() {
     try {
-        const response = await fetch('/api/statistics');
-        const data = await response.json();
+        showLoading();
         
-        if (data.success) {
-            updateStatistics(data.data);
-            loadUserGrowthChart();
-            loadStartupDistributionChart();
-            loadRecentActivity();
+        // Statistika
+        const statsResponse = await fetch('/api/statistics');
+        const statsData = await statsResponse.json();
+        
+        if (statsData.success) {
+            updateStatistics(statsData.data);
+        } else {
+            showToast('Statistikani yuklashda xatolik', 'error');
         }
+        
+        // Grafiklar
+        await loadUserGrowthChart();
+        await loadStartupDistributionChart();
+        
+        // So'nggi faollik
+        await loadRecentActivity();
+        
+        // Notificationlar
+        await checkNewNotifications();
+        
+        hideLoading();
+        
     } catch (error) {
         console.error('Dashboard yuklash xatosi:', error);
+        hideLoading();
         showToast('Statistikani yuklashda xatolik', 'error');
     }
 }
 
-// Statistika yangilash
 function updateStatistics(stats) {
     // Asosiy statistika
-    document.getElementById('totalUsers').textContent = stats.total_users.toLocaleString();
-    document.getElementById('totalStartups').textContent = stats.total_startups.toLocaleString();
-    document.getElementById('activeStartups').textContent = stats.active_startups.toLocaleString();
-    document.getElementById('newToday').textContent = stats.new_today.toLocaleString();
-    document.getElementById('activityRate').textContent = stats.activity_rate + '%';
+    updateElement('totalUsers', formatNumber(stats.total_users || 0));
+    updateElement('totalStartups', formatNumber(stats.total_startups || 0));
+    updateElement('activeStartups', formatNumber(stats.active_startups || 0));
+    updateElement('newToday', formatNumber(stats.new_today || 0));
     
-    // Progress bar
-    document.getElementById('activityProgress').style.width = stats.activity_rate + '%';
+    // Faollik darajasi
+    const activityRate = stats.active_users ? Math.round((stats.active_users / stats.total_users) * 100) : 0;
+    updateElement('activityRate', activityRate + '%');
+    const activityProgress = document.getElementById('activityProgress');
+    if (activityProgress) {
+        activityProgress.style.width = activityRate + '%';
+    }
     
     // Trendlar
-    if (stats.trends) {
-        document.getElementById('startupTrend').innerHTML = `
-            <i class="fas fa-arrow-up"></i>
-            <span>${stats.trends.startups}</span>
+    const trendPercent = stats.trends?.users || '+0%';
+    const trendElement = document.getElementById('startupTrend');
+    if (trendElement) {
+        const isPositive = trendPercent.includes('+');
+        trendElement.innerHTML = `
+            <i class="fas fa-arrow-${isPositive ? 'up' : 'down'}"></i>
+            <span>${trendPercent}</span>
         `;
-        document.getElementById('activeStartupCount').textContent = `${stats.active_startups} ta`;
-        document.getElementById('newUsersToday').textContent = `${stats.new_today} user`;
+        trendElement.className = `trend ${isPositive ? 'positive' : 'negative'}`;
+    }
+    
+    updateElement('activeStartupCount', `${stats.active_startups || 0} ta`);
+    updateElement('newUsersToday', `${stats.new_today || 0} user`);
+    
+    // Kategoriyalar statistikasi
+    if (stats.categories) {
+        updateCategoryStats(stats.categories);
     }
 }
 
-// Foydalanuvchi o'sishi grafigi
+function updateElement(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.textContent = value;
+    }
+}
+
+function updateCategoryStats(categories) {
+    const container = document.getElementById('categoryStats');
+    if (!container) return;
+    
+    let html = '';
+    Object.entries(categories).forEach(([category, count]) => {
+        const percentage = Math.round((count / (Object.values(categories).reduce((a, b) => a + b, 0) || 1)) * 100);
+        html += `
+            <div class="category-item">
+                <div class="category-info">
+                    <span class="category-name">${category}</span>
+                    <span class="category-count">${count}</span>
+                </div>
+                <div class="category-progress">
+                    <div class="category-progress-bar" style="width: ${percentage}%"></div>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html || '<div class="empty-state">Kategoriya statistikasi mavjud emas</div>';
+}
+
 async function loadUserGrowthChart() {
     try {
         const period = document.getElementById('growthFilter')?.value || 'month';
@@ -246,177 +549,245 @@ async function loadUserGrowthChart() {
         const data = await response.json();
         
         if (data.success) {
-            const ctx = document.getElementById('userGrowthChart')?.getContext('2d');
-            if (!ctx) return;
-            
-            // Avvalgi chartni yo'q qilish
-            if (charts.userGrowth) {
-                charts.userGrowth.destroy();
-            }
-            
-            // Yangi chart yaratish
-            charts.userGrowth = new Chart(ctx, {
-                type: 'line',
-                data: data.data,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top',
-                            labels: {
-                                color: getComputedStyle(document.documentElement).getPropertyValue('--text-primary')
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            grid: {
-                                color: getComputedStyle(document.documentElement).getPropertyValue('--border-color')
-                            },
-                            ticks: {
-                                color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary')
-                            }
-                        },
-                        y: {
-                            grid: {
-                                color: getComputedStyle(document.documentElement).getPropertyValue('--border-color')
-                            },
-                            ticks: {
-                                color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary')
-                            }
-                        }
-                    }
-                }
-            });
+            renderUserGrowthChart(data.data);
         }
     } catch (error) {
         console.error('Chart yuklash xatosi:', error);
     }
 }
 
-// Startap taqsimoti grafigi
+function renderUserGrowthChart(chartData) {
+    const ctx = document.getElementById('userGrowthChart');
+    if (!ctx) return;
+    
+    // Avvalgi chartni yo'q qilish
+    if (userGrowthChart) {
+        userGrowthChart.destroy();
+    }
+    
+    // Yangi chart yaratish
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const textColor = isDark ? '#ffffff' : '#333333';
+    const gridColor = isDark ? '#444444' : '#e0e0e0';
+    
+    userGrowthChart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        font: {
+                            family: "'Inter', sans-serif"
+                        }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#2a2a2a' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 10,
+                    cornerRadius: 6
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        color: gridColor
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: {
+                            family: "'Inter', sans-serif"
+                        }
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: gridColor
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: {
+                            family: "'Inter', sans-serif"
+                        }
+                    }
+                }
+            },
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            animations: {
+                tension: {
+                    duration: 1000,
+                    easing: 'linear'
+                }
+            }
+        }
+    });
+}
+
 async function loadStartupDistributionChart() {
     try {
         const response = await fetch('/api/analytics/startup-distribution');
         const data = await response.json();
         
         if (data.success) {
-            const ctx = document.getElementById('startupDistributionChart')?.getContext('2d');
-            if (!ctx) return;
-            
-            // Avvalgi chartni yo'q qilish
-            if (charts.startupDistribution) {
-                charts.startupDistribution.destroy();
-            }
-            
-            // Jami startaplar soni
-            document.getElementById('totalStartupsChart').textContent = data.total;
-            
-            // Legend yaratish
-            const legendContainer = document.getElementById('distributionLegend');
-            if (legendContainer) {
-                let legendHTML = '';
-                data.data.labels.forEach((label, index) => {
-                    const value = data.data.datasets[0].data[index];
-                    const color = data.data.datasets[0].backgroundColor[index];
-                    legendHTML += `
-                        <div class="legend-item">
-                            <div class="legend-color" style="background-color: ${color}"></div>
-                            <div class="legend-text">${label}</div>
-                            <div class="legend-value">${value}</div>
-                        </div>
-                    `;
-                });
-                legendContainer.innerHTML = legendHTML;
-            }
-            
-            // Yangi chart yaratish
-            charts.startupDistribution = new Chart(ctx, {
-                type: 'doughnut',
-                data: data.data,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: '70%',
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
-                    }
-                }
-            });
+            renderStartupDistributionChart(data.data, data.total);
         }
     } catch (error) {
         console.error('Distribution chart xatosi:', error);
     }
 }
 
-// So'nggi faollik
+function renderStartupDistributionChart(chartData, total) {
+    const ctx = document.getElementById('startupDistributionChart');
+    if (!ctx) return;
+    
+    // Avvalgi chartni yo'q qilish
+    if (distributionChart) {
+        distributionChart.destroy();
+    }
+    
+    // Jami startaplar soni
+    updateElement('totalStartupsChart', formatNumber(total || 0));
+    
+    // Legend yaratish
+    const legendContainer = document.getElementById('distributionLegend');
+    if (legendContainer) {
+        let legendHTML = '';
+        chartData.labels.forEach((label, index) => {
+            const value = chartData.datasets[0].data[index];
+            const colors = chartData.datasets[0].backgroundColor;
+            legendHTML += `
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: ${colors[index]}"></div>
+                    <div class="legend-text">${label}</div>
+                    <div class="legend-value">${formatNumber(value)}</div>
+                </div>
+            `;
+        });
+        legendContainer.innerHTML = legendHTML;
+    }
+    
+    // Yangi chart yaratish
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    
+    distributionChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#2a2a2a' : '#ffffff',
+                    titleColor: isDark ? '#ffffff' : '#333333',
+                    bodyColor: isDark ? '#ffffff' : '#333333',
+                    borderColor: isDark ? '#444444' : '#e0e0e0',
+                    borderWidth: 1,
+                    padding: 10,
+                    cornerRadius: 6
+                }
+            },
+            animation: {
+                animateScale: true,
+                animateRotate: true
+            }
+        }
+    });
+}
+
 async function loadRecentActivity() {
     try {
-        const response = await fetch('/api/activity');
+        const activityList = document.getElementById('activityList');
+        if (!activityList) return;
+        
+        const response = await fetch('/api/notifications');
         const data = await response.json();
         
-        if (data.success) {
-            const activityList = document.getElementById('activityList');
-            if (!activityList) return;
-            
-            let activityHTML = '';
-            data.data.forEach(activity => {
-                const iconClass = {
-                    'user': 'fa-user',
-                    'startup': 'fa-rocket',
-                    'message': 'fa-envelope',
-                    'system': 'fa-cog'
-                }[activity.icon] || 'fa-circle';
+        if (data.success && data.data.length > 0) {
+            let html = '';
+            data.data.slice(0, 10).forEach(notification => {
+                const icon = notification.type === 'new_startup' ? 'fa-rocket' : 
+                            notification.type === 'new_user' ? 'fa-user' : 'fa-bell';
                 
-                activityHTML += `
-                    <div class="activity-item slide-in">
+                html += `
+                    <div class="activity-item">
                         <div class="activity-icon">
-                            <i class="fas ${iconClass}"></i>
+                            <i class="fas ${icon}"></i>
                         </div>
                         <div class="activity-content">
-                            <div class="activity-text">${activity.description}</div>
-                            <div class="activity-time">${activity.time_ago}</div>
+                            <div class="activity-title">${notification.title}</div>
+                            <div class="activity-time">${notification.timestamp}</div>
                         </div>
                     </div>
                 `;
             });
             
-            activityList.innerHTML = activityHTML || `
+            activityList.innerHTML = html;
+        } else {
+            activityList.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-history"></i>
-                    <p>Faollik yo'q</p>
+                    <p>Faollik tarixi hozircha bo'sh</p>
                 </div>
             `;
         }
+        
     } catch (error) {
         console.error('Activity yuklash xatosi:', error);
     }
 }
 
-// Foydalanuvchilar ro'yxati
+function filterActivity(type) {
+    const buttons = document.querySelectorAll('.activity-filter-btn');
+    buttons.forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    // Bu joyda faollikni filtrlash logikasi
+    console.log('Faollik filtrlandi:', type);
+    loadRecentActivity();
+}
+
+// ==================== USERS FUNKSIYALARI ====================
 async function loadUsers(page = 1) {
     try {
+        showLoading();
         const search = document.getElementById('userSearch')?.value || '';
         const filter = document.getElementById('userFilter')?.value || 'all';
         
-        const response = await fetch(`/api/users?page=${page}&search=${search}&filter=${filter}`);
+        const response = await fetch(`/api/users?page=${page}&search=${encodeURIComponent(search)}&filter=${filter}`);
         const data = await response.json();
+        
+        hideLoading();
         
         if (data.success) {
             updateUsersTable(data.data);
             updatePagination('usersPagination', data.pagination, loadUsers);
+        } else {
+            showToast(data.error || 'Foydalanuvchilarni yuklashda xatolik', 'error');
         }
     } catch (error) {
         console.error('Foydalanuvchilar yuklash xatosi:', error);
+        hideLoading();
         showToast('Foydalanuvchilarni yuklashda xatolik', 'error');
     }
 }
 
-// Foydalanuvchilar jadvalini yangilash
 function updateUsersTable(users) {
     const tbody = document.getElementById('usersTableBody');
     if (!tbody) return;
@@ -435,24 +806,23 @@ function updateUsersTable(users) {
     
     let html = '';
     users.forEach(user => {
+        const statusClass = user.status === 'active' ? 'active' : 'inactive';
+        const statusText = user.status === 'active' ? 'Faol' : 'Faol emas';
+        
         html += `
             <tr>
-                <td>${user.id}</td>
-                <td>${user.first_name}</td>
-                <td>${user.last_name}</td>
-                <td>${user.phone}</td>
+                <td>${user.user_id || user.id}</td>
+                <td><strong>${user.first_name} ${user.last_name || ''}</strong></td>
+                <td>${user.username || '-'}</td>
+                <td>${user.phone || '+998 ** *** ** **'}</td>
                 <td>${formatDate(user.joined_at)}</td>
-                <td><span class="status-badge ${user.status}">${user.status === 'active' ? 'Faol' : 'Faol emas'}</span></td>
+                <td>
+                    <span class="status-badge ${statusClass}">${statusText}</span>
+                </td>
                 <td>
                     <div class="table-actions">
-                        <button class="action-btn view-btn" onclick="viewUser('${user.id}')" title="Ko'rish">
+                        <button class="action-btn view-btn" onclick="viewUser('${user.user_id || user.id}')" title="Ko'rish">
                             <i class="fas fa-eye"></i>
-                        </button>
-                        <button class="action-btn edit-btn" onclick="editUser('${user.id}')" title="Tahrirlash">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="action-btn delete-btn" onclick="deleteUser('${user.id}')" title="O'chirish">
-                            <i class="fas fa-trash"></i>
                         </button>
                     </div>
                 </td>
@@ -463,26 +833,144 @@ function updateUsersTable(users) {
     tbody.innerHTML = html;
 }
 
-// Startaplar ro'yxati
+async function viewUser(userId) {
+    try {
+        showLoading();
+        const response = await fetch(`/api/users/${userId}`);
+        const data = await response.json();
+        
+        hideLoading();
+        
+        if (data.success) {
+            showUserDetailModal(data.data);
+        } else {
+            showToast(data.error || 'Foydalanuvchi ma\'lumotlari topilmadi', 'error');
+        }
+    } catch (error) {
+        console.error('Foydalanuvchi ma\'lumotlari xatosi:', error);
+        hideLoading();
+        showToast('Foydalanuvchi ma\'lumotlarini yuklashda xatolik', 'error');
+    }
+}
+
+function showUserDetailModal(user) {
+    const modalContent = document.getElementById('userDetailContent');
+    
+    if (modalContent) {
+        modalContent.innerHTML = `
+            <div class="user-details">
+                <div class="user-header">
+                    <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(user.first_name + ' ' + (user.last_name || ''))}&background=000&color=fff" 
+                         alt="${user.first_name}" class="user-detail-avatar">
+                    <div>
+                        <h4>${user.first_name} ${user.last_name || ''}</h4>
+                        <p class="user-detail-email">${user.phone || 'Telefon mavjud emas'}</p>
+                        <p class="user-detail-id">ID: ${user.id}</p>
+                    </div>
+                </div>
+                
+                <div class="user-info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Username:</span>
+                        <span class="info-value">${user.username || 'Mavjud emas'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Telefon:</span>
+                        <span class="info-value">${user.phone || 'Mavjud emas'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Mutaxassislik:</span>
+                        <span class="info-value">${user.specialization || 'Kiritilmagan'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Tajriba:</span>
+                        <span class="info-value">${user.experience || 'Kiritilmagan'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Jinsi:</span>
+                        <span class="info-value">${user.gender || 'Kiritilmagan'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Tug'ilgan sana:</span>
+                        <span class="info-value">${user.birth_date || 'Kiritilmagan'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Ro'yxatdan o'tgan:</span>
+                        <span class="info-value">${formatDate(user.joined_at)}</span>
+                    </div>
+                </div>
+                
+                <div class="stats-section">
+                    <h5>Statistika</h5>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">Yaratgan startaplar</span>
+                            <span class="stat-value">${user.stats?.created || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Qo'shilgan startaplar</span>
+                            <span class="stat-value">${user.stats?.joined || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Faol startaplar</span>
+                            <span class="stat-value">${user.stats?.active || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Yakunlangan</span>
+                            <span class="stat-value">${user.stats?.completed || 0}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${user.startups && user.startups.length > 0 ? `
+                    <div class="startup-list">
+                        <h5>Yaratgan startaplar (${user.startups.length})</h5>
+                        <div class="startup-list-container">
+                            ${user.startups.map(startup => `
+                                <div class="startup-item">
+                                    <div class="startup-item-header">
+                                        <strong>${startup.name}</strong>
+                                        <span class="status-badge ${startup.status}">${startup.status}</span>
+                                    </div>
+                                    <div class="startup-item-meta">${formatDate(startup.created_at)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        openModal('userDetailModal');
+    }
+}
+
+// ==================== STARTUPS FUNKSIYALARI ====================
 async function loadStartups(page = 1) {
     try {
+        showLoading();
         const search = document.getElementById('startupSearch')?.value || '';
         const status = document.getElementById('startupFilter')?.value || 'all';
+        const category = document.getElementById('startupCategoryFilter')?.value || 'all';
         
-        const response = await fetch(`/api/startups?page=${page}&search=${search}&status=${status}`);
+        const response = await fetch(`/api/startups?page=${page}&search=${encodeURIComponent(search)}&status=${status}&category=${category}`);
         const data = await response.json();
+        
+        hideLoading();
         
         if (data.success) {
             updateStartupsTable(data.data);
             updatePagination('startupsPagination', data.pagination, loadStartups);
+        } else {
+            showToast(data.error || 'Startaplarni yuklashda xatolik', 'error');
         }
     } catch (error) {
         console.error('Startaplar yuklash xatosi:', error);
+        hideLoading();
         showToast('Startaplarni yuklashda xatolik', 'error');
     }
 }
 
-// Startaplar jadvalini yangilash
 function updateStartupsTable(startups) {
     const tbody = document.getElementById('startupsTableBody');
     if (!tbody) return;
@@ -501,21 +989,17 @@ function updateStartupsTable(startups) {
     
     let html = '';
     startups.forEach(startup => {
-        const statusClass = {
-            'active': 'active',
-            'pending': 'pending',
-            'completed': 'completed',
-            'rejected': 'rejected'
-        }[startup.status] || 'pending';
+        const statusClass = startup.status;
+        const statusText = startup.status_text || startup.status;
         
         html += `
             <tr>
-                <td>${startup.id.substring(0, 8)}...</td>
+                <td>${startup.id.slice(-6)}</td>
                 <td><strong>${startup.name}</strong></td>
                 <td>${startup.owner_name}</td>
-                <td><span class="status-badge ${statusClass}">${startup.status_text}</span></td>
+                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
                 <td>${formatDate(startup.created_at)}</td>
-                <td>${startup.member_count}</td>
+                <td>${startup.member_count || 1}/${startup.max_members || 10}</td>
                 <td>
                     <div class="table-actions">
                         <button class="action-btn view-btn" onclick="viewStartup('${startup.id}')" title="Ko'rish">
@@ -529,6 +1013,11 @@ function updateStartupsTable(startups) {
                                 <i class="fas fa-times"></i>
                             </button>
                         ` : ''}
+                        ${startup.status === 'active' ? `
+                            <button class="action-btn edit-btn" onclick="completeStartup('${startup.id}')" title="Yakunlash">
+                                <i class="fas fa-flag-checkered"></i>
+                            </button>
+                        ` : ''}
                     </div>
                 </td>
             </tr>
@@ -538,230 +1027,932 @@ function updateStartupsTable(startups) {
     tbody.innerHTML = html;
 }
 
-// Startapni ko'rish
 async function viewStartup(startupId) {
     try {
+        showLoading();
         const response = await fetch(`/api/startup/${startupId}`);
         const data = await response.json();
         
+        hideLoading();
+        
         if (data.success) {
-            const startup = data.data;
-            const modalContent = document.getElementById('startupDetailContent');
-            
-            if (modalContent) {
-                modalContent.innerHTML = `
-                    <div class="startup-details">
-                        <h4>${startup.name}</h4>
-                        <p><strong>Holati:</strong> ${startup.status_text}</p>
-                        <p><strong>Yaratilgan sana:</strong> ${formatDate(startup.created_at)}</p>
-                        <p><strong>Boshlangan sana:</strong> ${formatDate(startup.started_at)}</p>
-                        <p><strong>Yakunlangan sana:</strong> ${formatDate(startup.ended_at)}</p>
-                        <p><strong>Guruh havolasi:</strong> <a href="${startup.group_link}" target="_blank">${startup.group_link}</a></p>
-                        
-                        <div class="description-section">
-                            <h5>Tavsif:</h5>
-                            <p>${startup.description}</p>
-                        </div>
-                        
-                        ${startup.results ? `
-                            <div class="results-section">
-                                <h5>Natijalar:</h5>
-                                <p>${startup.results}</p>
-                            </div>
-                        ` : ''}
-                        
-                        ${startup.owner ? `
-                            <div class="owner-section">
-                                <h5>Muallif:</h5>
-                                <p><strong>Ism:</strong> ${startup.owner.first_name} ${startup.owner.last_name}</p>
-                                <p><strong>Telefon:</strong> ${startup.owner.phone}</p>
-                                <p><strong>Bio:</strong> ${startup.owner.bio || 'Mavjud emas'}</p>
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-                
-                openModal('startupDetailModal');
-            }
+            showStartupDetailModal(data.data);
+        } else {
+            showToast(data.error || 'Startap ma\'lumotlari topilmadi', 'error');
         }
     } catch (error) {
         console.error('Startap ma\'lumotlari xatosi:', error);
+        hideLoading();
         showToast('Startap ma\'lumotlarini yuklashda xatolik', 'error');
     }
 }
 
-// Startapni tasdiqlash
+function showStartupDetailModal(startup) {
+    const modalContent = document.getElementById('startupDetailContent');
+    
+    if (modalContent) {
+        modalContent.innerHTML = `
+            <div class="startup-details">
+                <div class="startup-header">
+                    ${startup.logo ? `
+                        <img src="${startup.logo}" alt="${startup.name}" class="startup-logo">
+                    ` : `
+                        <div class="startup-logo-placeholder">
+                            <i class="fas fa-rocket"></i>
+                        </div>
+                    `}
+                    <div>
+                        <h4>${startup.name}</h4>
+                        <p class="startup-meta">
+                            <span class="status-badge ${startup.status}">${startup.status_text}</span>
+                            <span class="startup-category">${startup.category || 'Boshqa'}</span>
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="startup-info-grid">
+                    <div class="info-item">
+                        <span class="info-label">ID:</span>
+                        <span class="info-value">${startup.id}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Yaratilgan sana:</span>
+                        <span class="info-value">${formatDate(startup.created_at)}</span>
+                    </div>
+                    ${startup.started_at ? `
+                        <div class="info-item">
+                            <span class="info-label">Boshlangan sana:</span>
+                            <span class="info-value">${formatDate(startup.started_at)}</span>
+                        </div>
+                    ` : ''}
+                    ${startup.ended_at ? `
+                        <div class="info-item">
+                            <span class="info-label">Yakunlangan sana:</span>
+                            <span class="info-value">${formatDate(startup.ended_at)}</span>
+                        </div>
+                    ` : ''}
+                    <div class="info-item">
+                        <span class="info-label">A'zolar:</span>
+                        <span class="info-value">${startup.member_count || 0}/${startup.max_members || 10}</span>
+                    </div>
+                    ${startup.group_link ? `
+                        <div class="info-item">
+                            <span class="info-label">Guruh havolasi:</span>
+                            <span class="info-value">
+                                <a href="${startup.group_link}" target="_blank" class="external-link">
+                                    <i class="fas fa-external-link-alt"></i> Havola
+                                </a>
+                            </span>
+                        </div>
+                    ` : ''}
+                </div>
+                
+                <div class="description-section">
+                    <h5>Tavsif:</h5>
+                    <p class="description-text">${startup.description || 'Tavsif mavjud emas'}</p>
+                </div>
+                
+                ${startup.required_skills ? `
+                    <div class="skills-section">
+                        <h5>Kerakli mutaxassislar:</h5>
+                        <p class="skills-text">${startup.required_skills}</p>
+                    </div>
+                ` : ''}
+                
+                ${startup.results ? `
+                    <div class="results-section">
+                        <h5>Natijalar:</h5>
+                        <p class="results-text">${startup.results}</p>
+                    </div>
+                ` : ''}
+                
+                ${startup.owner ? `
+                    <div class="owner-section">
+                        <h5>Muallif:</h5>
+                        <div class="owner-info">
+                            <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(startup.owner.first_name + ' ' + (startup.owner.last_name || ''))}&background=000&color=fff" 
+                                 alt="${startup.owner.first_name}" class="owner-avatar">
+                            <div>
+                                <p class="owner-name">${startup.owner.first_name} ${startup.owner.last_name || ''}</p>
+                                <p class="owner-contact">${startup.owner.phone || 'Telefon mavjud emas'}</p>
+                                ${startup.owner.username ? `<p class="owner-username">@${startup.owner.username}</p>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+                
+                ${startup.members && startup.members.length > 0 ? `
+                    <div class="members-section">
+                        <h5>A'zolar (${startup.members.length}):</h5>
+                        <div class="members-list">
+                            ${startup.members.map(member => `
+                                <div class="member-item">
+                                    <div class="member-info">
+                                        <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(member.first_name + ' ' + (member.last_name || ''))}&background=000&color=fff" 
+                                             alt="${member.first_name}" class="member-avatar">
+                                        <span class="member-name">${member.first_name} ${member.last_name || ''}</span>
+                                    </div>
+                                    <span class="member-role">${member.role || 'A\'zo'}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                ${startup.join_requests && startup.join_requests.length > 0 ? `
+                    <div class="join-requests-section">
+                        <h5>Join Requests (${startup.join_requests.length}):</h5>
+                        <div class="join-requests-list">
+                            ${startup.join_requests.map(request => `
+                                <div class="join-request-item">
+                                    <div class="join-request-info">
+                                        <span class="join-request-user">User ID: ${request.user_id}</span>
+                                        <span class="join-request-status">Status: ${request.status}</span>
+                                    </div>
+                                    <span class="join-request-time">${formatDate(request.created_at)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        openModal('startupDetailModal');
+    }
+}
+
 async function approveStartup(startupId) {
-    if (!confirm('Startapni tasdiqlaysizmi?')) return;
+    if (!confirm('Startapni tasdiqlaysizmi?')) {
+        return;
+    }
     
     try {
+        showLoading();
         const response = await fetch(`/api/startup/${startupId}/approve`, {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
         });
+        
         const data = await response.json();
+        hideLoading();
         
         if (data.success) {
             showToast('Startap tasdiqlandi', 'success');
-            loadStartups(); // Ro'yxatni yangilash
+            loadStartups();
+            loadDashboard();
         } else {
             showToast(data.error || 'Tasdiqlash xatosi', 'error');
         }
     } catch (error) {
         console.error('Tasdiqlash xatosi:', error);
+        hideLoading();
         showToast('Server xatosi', 'error');
     }
 }
 
-// Startapni rad etish
 async function rejectStartup(startupId) {
-    if (!confirm('Startapni rad etasizmi?')) return;
+    if (!confirm('Startapni rad etasizmi?')) {
+        return;
+    }
+    
+    const reason = prompt('Rad etish sababini kiriting:');
+    if (!reason) {
+        showToast('Sabab kiritilmadi', 'warning');
+        return;
+    }
     
     try {
+        showLoading();
         const response = await fetch(`/api/startup/${startupId}/reject`, {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason })
         });
+        
         const data = await response.json();
+        hideLoading();
         
         if (data.success) {
             showToast('Startap rad etildi', 'success');
-            loadStartups(); // Ro'yxatni yangilash
+            loadStartups();
         } else {
             showToast(data.error || 'Rad etish xatosi', 'error');
         }
     } catch (error) {
         console.error('Rad etish xatosi:', error);
+        hideLoading();
         showToast('Server xatosi', 'error');
     }
 }
 
-// Batafsil statistika
+async function completeStartup(startupId) {
+    const results = prompt('Startap natijalarini kiriting:');
+    if (!results) {
+        showToast('Natijalar kiritilmadi', 'warning');
+        return;
+    }
+    
+    try {
+        showLoading();
+        const response = await fetch(`/api/startup/${startupId}/complete`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ results })
+        });
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            showToast('Startap yakunlandi', 'success');
+            loadStartups();
+        } else {
+            showToast(data.error || 'Yakunlash xatosi', 'error');
+        }
+    } catch (error) {
+        console.error('Yakunlash xatosi:', error);
+        hideLoading();
+        showToast('Server xatosi', 'error');
+    }
+}
+
+// ==================== MESSAGES FUNKSIYALARI ====================
+async function handleBroadcast(e) {
+    e.preventDefault();
+    
+    const message = document.getElementById('messageText').value;
+    const recipientType = document.getElementById('messageType').value;
+    
+    if (!message.trim()) {
+        showToast('Xabar matnini kiriting', 'error');
+        return;
+    }
+    
+    try {
+        showLoading();
+        const response = await fetch('/api/broadcast', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message,
+                recipient_type: recipientType
+            })
+        });
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            showToast('Xabar yuborildi', 'success');
+            clearMessageForm();
+            loadMessageHistory();
+        } else {
+            showToast(data.error || 'Xabar yuborish xatosi', 'error');
+        }
+    } catch (error) {
+        console.error('Xabar yuborish xatosi:', error);
+        hideLoading();
+        showToast('Server xatosi', 'error');
+    }
+}
+
+async function handleBroadcastModal(e) {
+    e.preventDefault();
+    
+    const message = document.getElementById('modalMessageText').value;
+    const recipientType = document.getElementById('modalMessageType').value;
+    
+    if (!message.trim()) {
+        showToast('Xabar matnini kiriting', 'error');
+        return;
+    }
+    
+    try {
+        showLoading();
+        const response = await fetch('/api/broadcast', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message,
+                recipient_type: recipientType
+            })
+        });
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            showToast('Xabar yuborildi', 'success');
+            closeModal();
+            loadMessageHistory();
+        } else {
+            showToast(data.error || 'Xabar yuborish xatosi', 'error');
+        }
+    } catch (error) {
+        console.error('Xabar yuborish xatosi:', error);
+        hideLoading();
+        showToast('Server xatosi', 'error');
+    }
+}
+
+async function loadMessageHistory() {
+    try {
+        const historyList = document.getElementById('messageHistory');
+        if (!historyList) return;
+        
+        // API orqali yuborilgan xabarlarni olish
+        historyList.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-history"></i>
+                <p>Xabar tarixi hozircha bo'sh</p>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Xabarlar yuklash xatosi:', error);
+    }
+}
+
+function clearMessageForm() {
+    document.getElementById('messageText').value = '';
+    document.getElementById('messageType').value = 'all';
+}
+
+function openBroadcastModal() {
+    document.getElementById('modalMessageText').value = '';
+    document.getElementById('modalMessageType').value = 'all';
+    openModal('broadcastModal');
+}
+
+// ==================== STATISTICS FUNKSIYALARI ====================
 async function loadDetailedStatistics() {
     try {
+        showLoading();
         const period = document.getElementById('statsPeriod')?.value || 'month';
-        // Bu yerda batafsil statistika API chaqiriladi
-        // Hozir demo ma'lumotlar ko'rsatamiz
-        showToast('Statistika yuklanmoqda...', 'info');
+        
+        // Statistika ma'lumotlarini yuklash
+        const statsResponse = await fetch('/api/statistics');
+        const statsData = await statsResponse.json();
+        
+        if (statsData.success) {
+            updateDetailedStatistics(statsData.data);
+        }
+        
+        // Kategoriyalar statistikasi
+        const categoriesResponse = await fetch('/api/categories');
+        const categoriesData = await categoriesResponse.json();
+        
+        if (categoriesData.success) {
+            updateCategoriesChart(categoriesData.data);
+        }
+        
+        // Faollik grafigi
+        renderActivityChart();
+        
+        hideLoading();
+        
     } catch (error) {
-        console.error('Statistika yuklash xatosi:', error);
+        console.error('Batafsil statistika xatosi:', error);
+        hideLoading();
+        showToast('Statistikani yuklashda xatolik', 'error');
     }
 }
 
-// Adminlar ro'yxati
-async function loadAdmins() {
-    try {
-        const response = await fetch('/api/admins');
-        const data = await response.json();
+function updateDetailedStatistics(stats) {
+    // Foydalanuvchi statistikasi
+    updateElement('detailedTotalUsers', formatNumber(stats.total_users || 0));
+    updateElement('detailedActiveUsers', formatNumber(stats.active_users || 0));
+    updateElement('detailedNewUsers', formatNumber(stats.new_today || 0));
+    
+    const avgDailyUsers = stats.total_users ? Math.round(stats.total_users / 30) : 0;
+    updateElement('detailedAvgDailyUsers', formatNumber(avgDailyUsers));
+    
+    // Startap statistikasi
+    updateElement('detailedTotalStartups', formatNumber(stats.total_startups || 0));
+    updateElement('detailedActiveStartups', formatNumber(stats.active_startups || 0));
+    updateElement('detailedNewStartups', formatNumber(stats.pending_startups || 0));
+    
+    const successRate = stats.total_startups > 0 ? 
+        Math.round((stats.completed_startups / stats.total_startups) * 100) : 0;
+    updateElement('detailedSuccessRate', successRate + '%');
+}
+
+function updateCategoriesChart(categories) {
+    const container = document.getElementById('categoriesChart');
+    if (!container) return;
+    
+    if (categories.length === 0) {
+        container.innerHTML = '<div class="empty-state">Kategoriya statistikasi mavjud emas</div>';
+        return;
+    }
+    
+    // Top 10 kategoriyalar
+    const topCategories = categories.slice(0, 10);
+    
+    let html = '';
+    topCategories.forEach(category => {
+        const total = category.total || 0;
+        const active = category.active || 0;
+        const completed = category.completed || 0;
         
-        if (data.success) {
-            const tbody = document.getElementById('adminsTableBody');
-            if (tbody) {
-                let html = '';
-                data.data.forEach(admin => {
-                    html += `
-                        <tr>
-                            <td>${admin.id}</td>
-                            <td><strong>${admin.username}</strong></td>
-                            <td>${admin.full_name}</td>
-                            <td>${admin.email}</td>
-                            <td><span class="status-badge ${admin.role}">${admin.role}</span></td>
-                            <td>${formatDate(admin.last_login)}</td>
-                            <td>
-                                <div class="table-actions">
-                                    ${admin.username !== currentUser?.username ? `
-                                        <button class="action-btn delete-btn" onclick="deleteAdmin(${admin.id})" title="O'chirish">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    ` : ''}
-                                </div>
-                            </td>
-                        </tr>
-                    `;
-                });
-                tbody.innerHTML = html;
+        html += `
+            <div class="category-chart-item">
+                <div class="category-name">${category.name}</div>
+                <div class="category-stats">
+                    <div class="category-stat">
+                        <span class="stat-label">Jami:</span>
+                        <span class="stat-value">${total}</span>
+                    </div>
+                    <div class="category-stat">
+                        <span class="stat-label">Faol:</span>
+                        <span class="stat-value">${active}</span>
+                    </div>
+                    <div class="category-stat">
+                        <span class="stat-label">Yakunlangan:</span>
+                        <span class="stat-value">${completed}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function renderActivityChart() {
+    const ctx = document.getElementById('activityChart');
+    if (!ctx) return;
+    
+    // Avvalgi chartni yo'q qilish
+    if (activityChart) {
+        activityChart.destroy();
+    }
+    
+    // Bo'sh chart yaratish (keyin API orqali to'ldiriladi)
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const textColor = isDark ? '#ffffff' : '#333333';
+    const gridColor = isDark ? '#444444' : '#e0e0e0';
+    
+    activityChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba', 'Yakshanba'],
+            datasets: [{
+                label: 'Faol startaplar',
+                data: [12, 19, 8, 15, 12, 5, 18],
+                backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                borderColor: '#000000',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: {
+                        color: textColor
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        color: gridColor
+                    },
+                    ticks: {
+                        color: textColor
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: gridColor
+                    },
+                    ticks: {
+                        color: textColor
+                    }
+                }
             }
         }
-    } catch (error) {
-        console.error('Adminlar yuklash xatosi:', error);
-    }
+    });
 }
 
-// Backup yuklash
-async function loadBackups() {
+// ==================== SYSTEM HEALTH FUNKSIYALARI ====================
+async function loadSystemHealth() {
     try {
-        const response = await fetch('/api/backups');
+        showLoading();
+        const response = await fetch('/api/system/health');
         const data = await response.json();
         
+        hideLoading();
+        
         if (data.success) {
-            const container = document.getElementById('backupHistory');
-            if (container) {
-                let html = '<h3>Backup tarixi</h3>';
-                data.data.forEach(backup => {
-                    html += `
-                        <div class="backup-item">
-                            <div class="backup-info">
-                                <strong>${backup.filename}</strong>
-                                <span>${backup.size} • ${formatDate(backup.created_at)}</span>
-                            </div>
-                            <div class="backup-actions">
-                                <button class="action-btn" onclick="downloadBackup('${backup.filename}')" title="Yuklab olish">
-                                    <i class="fas fa-download"></i>
-                                </button>
-                                <button class="action-btn delete-btn" onclick="deleteBackup(${backup.id})" title="O'chirish">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
-            }
+            updateSystemHealth(data.data);
+        } else {
+            showToast('Tizim holatini yuklashda xatolik', 'error');
         }
     } catch (error) {
-        console.error('Backup yuklash xatosi:', error);
+        console.error('Tizim holati xatosi:', error);
+        hideLoading();
+        showToast('Tizim holatini yuklashda xatolik', 'error');
     }
 }
 
-// Sozlamalar yuklash
+function updateSystemHealth(healthData) {
+    // CPU
+    updateElement('cpuUsage', healthData.cpu.usage + '%');
+    updateElement('cpuCores', healthData.cpu.cores);
+    const cpuProgress = document.getElementById('cpuProgress');
+    if (cpuProgress) {
+        cpuProgress.style.width = healthData.cpu.usage + '%';
+        cpuProgress.className = `progress-bar ${getHealthStatusClass(healthData.cpu.status)}`;
+    }
+    
+    // Memory
+    const memoryUsage = formatBytes(healthData.memory.used) + ' / ' + formatBytes(healthData.memory.total);
+    updateElement('memoryUsage', memoryUsage);
+    updateElement('memoryPercent', healthData.memory.percent + '%');
+    const memoryProgress = document.getElementById('memoryProgress');
+    if (memoryProgress) {
+        memoryProgress.style.width = healthData.memory.percent + '%';
+        memoryProgress.className = `progress-bar ${getHealthStatusClass(healthData.memory.status)}`;
+    }
+    
+    // Disk
+    const diskUsage = formatBytes(healthData.disk.used) + ' / ' + formatBytes(healthData.disk.total);
+    updateElement('diskUsage', diskUsage);
+    updateElement('diskPercent', healthData.disk.percent + '%');
+    const diskProgress = document.getElementById('diskProgress');
+    if (diskProgress) {
+        diskProgress.style.width = healthData.disk.percent + '%';
+        diskProgress.className = `progress-bar ${getHealthStatusClass(healthData.disk.status)}`;
+    }
+    
+    // Xizmatlar holati
+    updateServiceStatus(healthData.services);
+    
+    // Uptime
+    const uptimeElement = document.getElementById('uptime');
+    if (uptimeElement) {
+        uptimeElement.textContent = formatUptime(healthData.uptime);
+    }
+}
+
+function getHealthStatusClass(status) {
+    switch(status) {
+        case 'good': return 'good';
+        case 'warning': return 'warning';
+        case 'critical': return 'critical';
+        default: return '';
+    }
+}
+
+function updateServiceStatus(services) {
+    // Bot holati
+    const botStatusDot = document.getElementById('botStatusDot');
+    const botStatusText = document.getElementById('botStatusText');
+    const botStatusBadge = document.getElementById('botStatusBadge');
+    
+    if (botStatusDot && botStatusText) {
+        if (services.bot === 'online') {
+            botStatusDot.className = 'status-dot online';
+            botStatusText.textContent = 'Online';
+            if (botStatusBadge) {
+                botStatusBadge.textContent = 'Online';
+                botStatusBadge.className = 'status-badge active';
+            }
+        } else {
+            botStatusDot.className = 'status-dot offline';
+            botStatusText.textContent = 'Offline';
+            if (botStatusBadge) {
+                botStatusBadge.textContent = 'Offline';
+                botStatusBadge.className = 'status-badge rejected';
+            }
+        }
+    }
+    
+    // Database holati
+    const dbStatusDot = document.getElementById('dbStatusDot');
+    const dbStatusText = document.getElementById('dbStatusText');
+    
+    if (dbStatusDot && dbStatusText) {
+        if (services.database === 'online') {
+            dbStatusDot.className = 'status-dot online';
+            dbStatusText.textContent = 'Online';
+        } else {
+            dbStatusDot.className = 'status-dot offline';
+            dbStatusText.textContent = 'Offline';
+        }
+    }
+    
+    // Web server holati
+    const webStatusDot = document.getElementById('webStatusDot');
+    const webStatusText = document.getElementById('webStatusText');
+    
+    if (webStatusDot && webStatusText) {
+        if (services.web_server === 'online') {
+            webStatusDot.className = 'status-dot online';
+            webStatusText.textContent = 'Online';
+        } else {
+            webStatusDot.className = 'status-dot offline';
+            webStatusText.textContent = 'Offline';
+        }
+    }
+}
+
+// ==================== SETTINGS FUNKSIYALARI ====================
 async function loadSettings() {
     try {
+        showLoading();
         const response = await fetch('/api/settings');
         const data = await response.json();
         
+        hideLoading();
+        
         if (data.success) {
-            // Sozlamalarni formaga to'ldirish
-            const settings = data.data;
-            document.getElementById('siteName').value = settings.site_name;
-            document.getElementById('adminEmail').value = settings.admin_email;
-            document.getElementById('timezone').value = settings.timezone;
-            document.getElementById('botToken').textContent = settings.bot_token;
-            document.getElementById('botStatus').textContent = settings.bot_status;
+            updateSettingsForm(data.data);
+        } else {
+            showToast('Sozlamalarni yuklashda xatolik', 'error');
         }
     } catch (error) {
         console.error('Sozlamalar yuklash xatosi:', error);
+        hideLoading();
+        showToast('Sozlamalarni yuklashda xatolik', 'error');
     }
 }
 
-// Foydalanuvchi ma'lumotlarini yangilash
-function updateUserInfo() {
-    if (currentUser) {
-        const adminName = document.getElementById('adminName');
-        const adminEmail = document.getElementById('adminEmail');
-        const adminAvatar = document.getElementById('adminAvatar');
-        
-        if (adminName) adminName.textContent = currentUser.full_name;
-        if (adminEmail) adminEmail.textContent = currentUser.username + '@garajhub.uz';
-        if (adminAvatar) {
-            adminAvatar.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.full_name)}&background=000000&color=fff`;
+function updateSettingsForm(settings) {
+    // Umumiy sozlamalar
+    updateFormValue('siteName', settings.site_name);
+    updateFormValue('adminEmail', settings.admin_email);
+    updateFormValue('timezone', settings.timezone);
+    
+    // Bot sozlamalari
+    updateElement('botToken', settings.bot_token);
+    updateElement('channelUsername', settings.channel_username);
+    updateElement('adminId', settings.admin_id);
+    updateElement('version', settings.version);
+    
+    const botStatusBadge = document.getElementById('botStatusBadge');
+    if (botStatusBadge) {
+        if (settings.bot_status === 'online') {
+            botStatusBadge.textContent = 'Online';
+            botStatusBadge.className = 'status-badge active';
+        } else {
+            botStatusBadge.textContent = 'Offline';
+            botStatusBadge.className = 'status-badge rejected';
+        }
+    }
+    
+    const dbStatusBadge = document.getElementById('dbStatusBadge');
+    if (dbStatusBadge) {
+        if (settings.db_status === 'online') {
+            dbStatusBadge.textContent = 'Online';
+            dbStatusBadge.className = 'status-badge active';
+        } else {
+            dbStatusBadge.textContent = 'Offline';
+            dbStatusBadge.className = 'status-badge rejected';
         }
     }
 }
 
-// Pagination yangilash
+function updateFormValue(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.value = value || '';
+    }
+}
+
+async function handleSettingsSave(e) {
+    e.preventDefault();
+    
+    const settings = {
+        site_name: document.getElementById('siteName').value,
+        admin_email: document.getElementById('adminEmail').value,
+        timezone: document.getElementById('timezone').value
+    };
+    
+    try {
+        showLoading();
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            showToast('Sozlamalar saqlandi', 'success');
+        } else {
+            showToast(data.error || 'Sozlamalarni saqlash xatosi', 'error');
+        }
+    } catch (error) {
+        console.error('Sozlamalar xatosi:', error);
+        hideLoading();
+        showToast('Server xatosi', 'error');
+    }
+}
+
+function saveNotificationSettings() {
+    const notifyNewUsers = document.getElementById('notifyNewUsers').checked;
+    const notifyNewStartups = document.getElementById('notifyNewStartups').checked;
+    const notifyStartupApproval = document.getElementById('notifyStartupApproval').checked;
+    
+    // Bu yerda sozlamalarni saqlash logikasi
+    localStorage.setItem('notifyNewUsers', notifyNewUsers);
+    localStorage.setItem('notifyNewStartups', notifyNewStartups);
+    localStorage.setItem('notifyStartupApproval', notifyStartupApproval);
+    
+    showToast('Bildirishnoma sozlamalari saqlandi', 'success');
+}
+
+// ==================== UTILITY FUNKSIYALARI ====================
+function openModal(modalId) {
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modal = document.getElementById(modalId);
+    
+    if (modalOverlay && modal) {
+        modalOverlay.classList.add('active');
+        modal.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeModal() {
+    const modalOverlay = document.getElementById('modalOverlay');
+    
+    if (modalOverlay) {
+        modalOverlay.classList.remove('active');
+        modalOverlay.querySelectorAll('.modal').forEach(modal => {
+            modal.style.display = 'none';
+        });
+        document.body.style.overflow = 'auto';
+    }
+}
+
+function showToast(message, type = 'info') {
+    const colors = {
+        success: '#000000',
+        error: '#ff4444',
+        warning: '#ff8800',
+        info: '#0099cc'
+    };
+    
+    Toastify({
+        text: message,
+        duration: 3000,
+        gravity: "top",
+        position: "right",
+        backgroundColor: colors[type] || colors.info,
+        stopOnFocus: true,
+        style: {
+            fontFamily: "'Inter', sans-serif",
+            fontWeight: '500',
+            borderRadius: '8px',
+            padding: '12px 20px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+        }
+    }).showToast();
+}
+
+function showLoading() {
+    const loading = document.getElementById('loadingScreen');
+    if (loading) {
+        loading.style.display = 'flex';
+        loading.style.opacity = '1';
+    }
+}
+
+function hideLoading() {
+    const loading = document.getElementById('loadingScreen');
+    if (loading) {
+        loading.style.opacity = '0';
+        setTimeout(() => {
+            loading.style.display = 'none';
+        }, 300);
+    }
+}
+
+function toggleTheme() {
+    const theme = this.checked ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+    
+    // Grafiklarni yangilash
+    setTimeout(() => {
+        if (currentPage === 'dashboard') {
+            if (userGrowthChart) {
+                userGrowthChart.destroy();
+                loadUserGrowthChart();
+            }
+            if (distributionChart) {
+                distributionChart.destroy();
+                loadStartupDistributionChart();
+            }
+        }
+        if (currentPage === 'statistics' && activityChart) {
+            activityChart.destroy();
+            renderActivityChart();
+        }
+    }, 100);
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Noma\'lum';
+    
+    try {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Hozirgina';
+        if (diffMins < 60) return `${diffMins} daqiqa oldin`;
+        if (diffHours < 24) return `${diffHours} soat oldin`;
+        if (diffDays === 1) return 'Kecha';
+        if (diffDays < 7) return `${diffDays} kun oldin`;
+        
+        return date.toLocaleDateString('uz-UZ', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } catch (error) {
+        return dateString;
+    }
+}
+
+function formatNumber(num) {
+    if (typeof num !== 'number') {
+        num = parseInt(num) || 0;
+    }
+    return new Intl.NumberFormat('uz-UZ').format(num);
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    
+    let result = '';
+    if (days > 0) result += `${days} kun `;
+    if (hours > 0) result += `${hours} soat `;
+    if (minutes > 0) result += `${minutes} daqiqa`;
+    
+    return result || 'Bir necha soniya';
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 function updatePagination(elementId, pagination, callback) {
     const container = document.getElementById(elementId);
     if (!container) return;
     
-    const { page, total_pages } = pagination;
+    const { page, per_page, total, total_pages } = pagination;
+    
+    if (total_pages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
     
     let html = `
         <button class="pagination-btn" ${page === 1 ? 'disabled' : ''} onclick="${callback.name}(${page - 1})">
@@ -799,235 +1990,355 @@ function updatePagination(elementId, pagination, callback) {
     container.innerHTML = html;
 }
 
-// Modal oynalari
-function openModal(modalId) {
-    const modalOverlay = document.getElementById('modalOverlay');
-    const modal = document.getElementById(modalId);
-    
-    if (modalOverlay && modal) {
-        modalOverlay.classList.add('active');
-        modal.style.display = 'block';
+function handleSearch(e) {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+        document.getElementById('searchResults').style.display = 'none';
+        return;
     }
-}
-
-function closeModal() {
-    const modalOverlay = document.getElementById('modalOverlay');
     
-    if (modalOverlay) {
-        modalOverlay.classList.remove('active');
-        modalOverlay.querySelectorAll('.modal').forEach(modal => {
-            modal.style.display = 'none';
-        });
-    }
+    // Qidiruv natijalarini ko'rsatish
+    document.getElementById('searchResults').style.display = 'block';
+    document.getElementById('searchResults').innerHTML = `
+        <div class="search-result-item" onclick="showPage('users')">
+            <div class="search-result-icon">
+                <i class="fas fa-user"></i>
+            </div>
+            <div class="search-result-content">
+                <div class="search-result-title">Foydalanuvchilar qidiruvi</div>
+                <div class="search-result-subtitle">"${query}" so'zini o'z ichiga olgan foydalanuvchilar</div>
+            </div>
+        </div>
+        <div class="search-result-item" onclick="showPage('startups')">
+            <div class="search-result-icon">
+                <i class="fas fa-rocket"></i>
+            </div>
+            <div class="search-result-content">
+                <div class="search-result-title">Startaplar qidiruvi</div>
+                <div class="search-result-subtitle">"${query}" so'zini o'z ichiga olgan startaplar</div>
+            </div>
+        </div>
+    `;
 }
 
-// Toast notification
-function showToast(message, type = 'info') {
-    const colors = {
-        success: '#000000',
-        error: '#ff4444',
-        warning: '#ff8800',
-        info: '#0099cc'
-    };
-    
-    Toastify({
-        text: message,
-        duration: 3000,
-        gravity: "top",
-        position: "right",
-        backgroundColor: colors[type] || colors.info,
-        stopOnFocus: true,
-    }).showToast();
-}
-
-// Theme toggle
-function toggleTheme() {
-    const theme = this.checked ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-}
-
-// Utility funksiyalar
-function formatDate(dateString) {
-    if (!dateString) return 'Noma\'lum';
-    
-    const date = new Date(dateString);
-    return date.toLocaleDateString('uz-UZ', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-}
-
-function formatNumber(num) {
-    return new Intl.NumberFormat().format(num);
-}
-
-// Foydalanuvchi qidirish
-function searchUsers() {
-    const searchInput = document.getElementById('userSearch');
-    if (searchInput) {
-        clearTimeout(searchUsers.timer);
-        searchUsers.timer = setTimeout(() => {
-            loadUsers(1);
-        }, 500);
-    }
-}
-
-// Startap qidirish
-function searchStartups() {
-    const searchInput = document.getElementById('startupSearch');
-    if (searchInput) {
-        clearTimeout(searchStartups.timer);
-        searchStartups.timer = setTimeout(() => {
-            loadStartups(1);
-        }, 500);
-    }
-}
-
-// Faollik filtrlash
-function filterActivity(type) {
-    const buttons = document.querySelectorAll('.activity-filter-btn');
-    buttons.forEach(btn => btn.classList.remove('active'));
-    
-    event.target.classList.add('active');
-    
-    // Bu yerda faollikni filtrlash logikasi bo'ladi
-    showToast(`${type === 'all' ? 'Hamma' : type} faollik ko'rsatilmoqda`, 'info');
-}
-
-// Admin qo'shish modalini ochish
-function openAddAdminModal() {
-    openModal('addAdminModal');
-}
-
-// Backup yaratish
-function createBackup() {
-    if (!confirm('Backup yaratilsinmi?')) return;
-    
-    showToast('Backup yaratilmoqda...', 'info');
-    setTimeout(() => {
-        showToast('Backup muvaffaqiyatli yaratildi', 'success');
-        loadBackups();
-    }, 2000);
-}
-
-// Xabar yuborish formasi
-document.getElementById('broadcastForm')?.addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const message = document.getElementById('messageText').value;
-    const recipientType = document.getElementById('messageType').value;
-    
+async function showNotifications() {
     try {
-        const response = await fetch('/api/broadcast', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                message,
-                recipient_type: recipientType
-            })
-        });
-        
+        const response = await fetch('/api/notifications');
         const data = await response.json();
         
         if (data.success) {
-            showToast('Xabar yuborildi', 'success');
-            this.reset();
+            const notificationCount = document.getElementById('notificationCount');
+            if (notificationCount) {
+                notificationCount.textContent = data.data.length;
+                notificationCount.style.display = data.data.length > 0 ? 'block' : 'none';
+            }
             
-            // Xabar tarixini yangilash
-            addToMessageHistory(data.data);
-        } else {
-            showToast(data.error || 'Xabar yuborish xatosi', 'error');
+            // Notification dropdown yaratish
+            createNotificationDropdown(data.data);
         }
     } catch (error) {
-        console.error('Xabar yuborish xatosi:', error);
-        showToast('Server xatosi', 'error');
+        console.error('Notificationlar yuklash xatosi:', error);
     }
-});
+}
 
-// Xabar tarixiga qo'shish
-function addToMessageHistory(message) {
-    const historyList = document.getElementById('messageHistory');
-    if (historyList) {
-        const messageItem = document.createElement('div');
-        messageItem.className = 'history-item';
-        messageItem.innerHTML = `
-            <div class="history-message">${message.message}</div>
-            <div class="history-meta">
-                <span>${formatDate(message.sent_at)}</span>
-                <span>•</span>
-                <span>${message.recipient_type === 'all' ? 'Barcha' : message.recipient_type}</span>
-                <span>•</span>
-                <span>${message.sent_by}</span>
+function createNotificationDropdown(notifications) {
+    const dropdown = document.getElementById('notificationDropdown');
+    if (!dropdown) return;
+    
+    if (notifications.length === 0) {
+        dropdown.innerHTML = '<div class="notification-empty">Yangi bildirishnomalar yo\'q</div>';
+        return;
+    }
+    
+    let html = '';
+    notifications.slice(0, 5).forEach(notification => {
+        const icon = notification.type === 'new_startup' ? 'fa-rocket' : 
+                    notification.type === 'new_user' ? 'fa-user-plus' : 'fa-bell';
+        
+        html += `
+            <div class="notification-item ${notification.read ? 'read' : 'unread'}">
+                <div class="notification-icon">
+                    <i class="fas ${icon}"></i>
+                </div>
+                <div class="notification-content">
+                    <div class="notification-title">${notification.title}</div>
+                    <div class="notification-time">${formatDate(notification.timestamp)}</div>
+                </div>
             </div>
         `;
-        
-        historyList.insertBefore(messageItem, historyList.firstChild);
+    });
+    
+    if (notifications.length > 5) {
+        html += `<div class="notification-more">+${notifications.length - 5} ta yana</div>`;
+    }
+    
+    dropdown.innerHTML = html;
+    dropdown.style.display = 'block';
+    
+    // Tashqariga bosilsa yopish
+    setTimeout(() => {
+        document.addEventListener('click', function closeDropdown(e) {
+            if (!dropdown.contains(e.target) && e.target.id !== 'notificationBtn') {
+                dropdown.style.display = 'none';
+                document.removeEventListener('click', closeDropdown);
+            }
+        });
+    }, 100);
+}
+
+function startNotificationChecker() {
+    if (notificationsInterval) {
+        clearInterval(notificationsInterval);
+    }
+    
+    notificationsInterval = setInterval(async () => {
+        if (currentUser) {
+            await checkNewNotifications();
+        }
+    }, 60000); // Har 1 daqiqa
+    
+    // Dastlabki tekshirish
+    if (currentUser) {
+        checkNewNotifications();
     }
 }
 
-// Sozlamalarni saqlash
-document.getElementById('generalSettingsForm')?.addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const settings = {
-        site_name: document.getElementById('siteName').value,
-        admin_email: document.getElementById('adminEmail').value,
-        timezone: document.getElementById('timezone').value
-    };
-    
+function stopNotificationChecker() {
+    if (notificationsInterval) {
+        clearInterval(notificationsInterval);
+        notificationsInterval = null;
+    }
+}
+
+async function checkNewNotifications() {
     try {
-        const response = await fetch('/api/settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(settings)
-        });
-        
+        const response = await fetch('/api/notifications');
         const data = await response.json();
         
         if (data.success) {
-            showToast('Sozlamalar saqlandi', 'success');
-        } else {
-            showToast(data.error || 'Sozlamalarni saqlash xatosi', 'error');
+            const unreadCount = data.data.filter(n => !n.read).length;
+            const notificationCount = document.getElementById('notificationCount');
+            
+            if (notificationCount) {
+                if (unreadCount > 0) {
+                    notificationCount.textContent = unreadCount > 99 ? '99+' : unreadCount;
+                    notificationCount.style.display = 'block';
+                } else {
+                    notificationCount.style.display = 'none';
+                }
+            }
         }
     } catch (error) {
-        console.error('Sozlamalar xatosi:', error);
-        showToast('Server xatosi', 'error');
+        console.error('Notification tekshirish xatosi:', error);
     }
-});
-
-// Tab o'zgartirish
-document.querySelectorAll('.settings-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        const tabId = this.dataset.tab;
-        
-        // Tablarni faollashtirish
-        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        
-        // Kontentni ko'rsatish
-        document.querySelectorAll('.settings-tab-content').forEach(content => {
-            content.classList.remove('active');
-        });
-        document.getElementById(tabId + 'Tab')?.classList.add('active');
-    });
-});
-
-// Sozlamalar yuklanganda
-if (currentPage === 'settings') {
-    loadSettings();
 }
 
-// Modal oynasi tashqarisini bosganda yopish
-document.getElementById('modalOverlay')?.addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeModal();
+function toggleLegend() {
+    const legend = document.getElementById('distributionLegend');
+    if (legend) {
+        legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
     }
-});
+}
+
+function exportUsers() {
+    // Foydalanuvchilarni eksport qilish
+    showToast('Foydalanuvchilar eksport qilish funksiyasi ishlab chiqilmoqda', 'info');
+}
+
+function exportStartups() {
+    // Startaplarni eksport qilish
+    showToast('Startaplar eksport qilish funksiyasi ishlab chiqilmoqda', 'info');
+}
+
+function exportChart(chartType) {
+    const canvas = document.getElementById(chartType + 'Chart');
+    if (canvas) {
+        const link = document.createElement('a');
+        link.download = chartType + '-chart.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        showToast('Grafik yuklab olindi', 'success');
+    }
+}
+
+function handleKeyboardShortcuts(e) {
+    // Ctrl + K qidirish
+    if (e.ctrlKey && e.key === 'k') {
+        e.preventDefault();
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.focus();
+        }
+    }
+    
+    // ESC modal yopish
+    if (e.key === 'Escape') {
+        closeModal();
+        
+        // Notification dropdown yopish
+        const dropdown = document.getElementById('notificationDropdown');
+        if (dropdown && dropdown.style.display === 'block') {
+            dropdown.style.display = 'none';
+        }
+    }
+    
+    // F5 - refresh current page
+    if (e.key === 'F5') {
+        e.preventDefault();
+        switch(currentPage) {
+            case 'dashboard':
+                loadDashboard();
+                break;
+            case 'users':
+                loadUsers();
+                break;
+            case 'startups':
+                loadStartups();
+                break;
+            case 'statistics':
+                loadDetailedStatistics();
+                break;
+            case 'system':
+                loadSystemHealth();
+                break;
+        }
+        showToast('Sahifa yangilandi', 'info');
+    }
+}
+
+// ==================== ADDITIONAL FUNCTIONS ====================
+
+// Admins page functions
+async function loadAdmins() {
+    try {
+        // Adminlar ro'yxatini API orqali olish
+        // Hozircha serverdan adminlar API mavjud emas
+        showToast('Adminlar ro\'yxati API hozircha mavjud emas', 'info');
+        
+        // Demo ma'lumotlar
+        const admins = [
+            {
+                id: 1,
+                username: currentUser?.username || 'admin',
+                full_name: currentUser?.full_name || 'Super Admin',
+                email: currentUser?.email || 'admin@garajhub.uz',
+                role: 'superadmin',
+                last_login: new Date().toISOString()
+            },
+            {
+                id: 2,
+                username: 'moderator',
+                full_name: 'Moderator',
+                email: 'moderator@garajhub.uz',
+                role: 'moderator',
+                last_login: new Date(Date.now() - 86400000).toISOString()
+            }
+        ];
+        
+        updateAdminsTable(admins);
+    } catch (error) {
+        console.error('Adminlar yuklash xatosi:', error);
+        showToast('Adminlarni yuklashda xatolik', 'error');
+    }
+}
+
+function updateAdminsTable(admins) {
+    const tbody = document.getElementById('adminsTableBody');
+    if (!tbody) return;
+    
+    let html = '';
+    admins.forEach(admin => {
+        const isCurrentUser = admin.username === currentUser?.username;
+        const roleClass = admin.role === 'superadmin' ? 'superadmin' : 'admin';
+        
+        html += `
+            <tr>
+                <td>${admin.id}</td>
+                <td><strong>${admin.username}</strong> ${isCurrentUser ? '<span class="current-user-badge">(Siz)</span>' : ''}</td>
+                <td>${admin.full_name}</td>
+                <td>${admin.email}</td>
+                <td><span class="status-badge ${roleClass}">${admin.role}</span></td>
+                <td>${formatDate(admin.last_login)}</td>
+                <td>
+                    <div class="table-actions">
+                        ${!isCurrentUser ? `
+                            <button class="action-btn delete-btn" onclick="deleteAdmin(${admin.id})" title="O'chirish">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : '<span class="current-user-label">Siz</span>'}
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+async function handleAddAdmin(e) {
+    e.preventDefault();
+    
+    const formData = {
+        username: document.getElementById('newAdminUsername').value,
+        password: document.getElementById('newAdminPassword').value,
+        full_name: document.getElementById('newAdminFullName').value,
+        email: document.getElementById('newAdminEmail').value,
+        role: document.getElementById('newAdminRole').value
+    };
+    
+    // Validatsiya
+    if (!formData.username || !formData.password || !formData.full_name || !formData.email) {
+        showToast('Barcha maydonlarni to\'ldiring', 'error');
+        return;
+    }
+    
+    if (formData.password.length < 6) {
+        showToast('Parol kamida 6 belgidan iborat bo\'lishi kerak', 'error');
+        return;
+    }
+    
+    // Bu yerda server API ga so'rov yuborish kerak
+    showToast('Yangi admin qo\'shildi (demo)', 'success');
+    closeModal();
+    document.getElementById('addAdminForm').reset();
+    loadAdmins();
+}
+
+function deleteAdmin(adminId) {
+    if (!confirm('Adminni o\'chirishni tasdiqlaysizmi?')) {
+        return;
+    }
+    
+    if (adminId === 1) {
+        showToast('Super adminni o\'chirib bo\'lmaydi', 'error');
+        return;
+    }
+    
+    // Bu yerda server API ga so'rov yuborish kerak
+    showToast('Admin o\'chirildi (demo)', 'success');
+    loadAdmins();
+}
+
+// ==================== GLOBAL FUNCTIONS ====================
+
+window.showPage = showPage;
+window.filterActivity = filterActivity;
+window.toggleLegend = toggleLegend;
+window.exportChart = exportChart;
+window.exportUsers = exportUsers;
+window.exportStartups = exportStartups;
+window.viewUser = viewUser;
+window.viewStartup = viewStartup;
+window.approveStartup = approveStartup;
+window.rejectStartup = rejectStartup;
+window.completeStartup = completeStartup;
+window.openBroadcastModal = openBroadcastModal;
+window.clearMessageForm = clearMessageForm;
+window.openAddAdminModal = openAddAdminModal;
+window.deleteAdmin = deleteAdmin;
+window.saveNotificationSettings = saveNotificationSettings;
+window.closeModal = closeModal;
+window.showNotifications = showNotifications;
+
+// Initialize the app
+window.onload = initializeApp;
