@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>GarajHub - Admin Panel</title>
-    <link rel="stylesheet" href="../static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
@@ -22,7 +23,7 @@
         <!-- Yon panel -->
         <aside class="sidebar">
             <div class="logo">
-                <h1><i class="fas fa-database"></i> <span>GarajHub</span></h1>
+                <h1><i class="fas fa-rocket"></i> <span>GarajHub</span></h1>
                 <button class="menu-toggle" id="menuToggle">
                     <i class="fas fa-bars"></i>
                 </button>
@@ -47,9 +48,6 @@
                         <li data-page="statistics">
                             <a href="#"><i class="fas fa-chart-bar"></i> <span>Statistika</span></a>
                         </li>
-                        <li data-page="reports">
-                            <a href="#"><i class="fas fa-file-alt"></i> <span>Hisobotlar</span></a>
-                        </li>
                     </ul>
                 </div>
                 
@@ -62,8 +60,8 @@
                         <li data-page="admins">
                             <a href="#"><i class="fas fa-user-shield"></i> <span>Adminlar</span></a>
                         </li>
-                        <li data-page="backup">
-                            <a href="#"><i class="fas fa-database"></i> <span>Backup</span></a>
+                        <li data-page="system">
+                            <a href="#"><i class="fas fa-server"></i> <span>Tizim holati</span></a>
                         </li>
                     </ul>
                 </div>
@@ -71,7 +69,7 @@
             
             <div class="user-profile">
                 <div class="user-avatar">
-                    <img id="adminAvatar" src="https://ui-avatars.com/api/?name=Admin&background=4A6FA5&color=fff" alt="Admin">
+                    <img id="adminAvatar" src="https://ui-avatars.com/api/?name=Admin&background=000&color=fff" alt="Admin">
                 </div>
                 <div class="user-info">
                     <h4 id="adminName">Admin</h4>
@@ -97,8 +95,6 @@
             <header class="header">
                 <div class="breadcrumb">
                     <span class="breadcrumb-item active">Asosiy panel</span>
-                    <span class="breadcrumb-divider">/</span>
-                    <span class="breadcrumb-item">Boshqaruv</span>
                 </div>
                 
                 <div class="header-actions">
@@ -123,7 +119,7 @@
                             </label>
                         </div>
                         
-                        <button class="header-btn add-btn" id="addNewBtn">
+                        <button class="header-btn add-btn" onclick="openBroadcastModal()">
                             <i class="fas fa-bullhorn"></i>
                             <span>Xabar yuborish</span>
                         </button>
@@ -136,7 +132,7 @@
                 <div class="login-container">
                     <div class="login-card">
                         <div class="login-header">
-                            <h1><i class="fas fa-database"></i> GarajHub</h1>
+                            <h1><i class="fas fa-rocket"></i> GarajHub</h1>
                             <p>Admin paneliga kirish</p>
                         </div>
                         
@@ -188,7 +184,7 @@
                                     <button class="stat-btn view-btn" onclick="showPage('users')">
                                         <i class="fas fa-eye"></i> Ko'rish
                                     </button>
-                                    <button class="stat-btn refresh-btn" onclick="loadStatistics()">
+                                    <button class="stat-btn refresh-btn" onclick="loadDashboard()">
                                         <i class="fas fa-redo"></i>
                                     </button>
                                 </div>
@@ -271,7 +267,6 @@
 
                     <!-- Grafiklar bo'limi -->
                     <div class="charts-section">
-                        <!-- Foydalanuvchi o'sishi grafigi -->
                         <div class="chart-card">
                             <div class="chart-header">
                                 <h3>Foydalanuvchi o'sishi</h3>
@@ -292,14 +287,8 @@
                             <div class="chart-container">
                                 <canvas id="userGrowthChart"></canvas>
                             </div>
-                            <div class="chart-footer">
-                                <button class="fullscreen-btn" onclick="openFullscreenChart('userGrowthChart', 'Foydalanuvchi o\'sishi')">
-                                    <i class="fas fa-expand"></i>
-                                </button>
-                            </div>
                         </div>
 
-                        <!-- Startap taqsimoti -->
                         <div class="chart-card">
                             <div class="chart-header">
                                 <h3>Startap taqsimoti</h3>
@@ -317,9 +306,7 @@
                                         <span class="center-label">Jami</span>
                                     </div>
                                 </div>
-                                <div class="distribution-legend" id="distributionLegend">
-                                    <!-- Legend JavaScript orqali yuklanadi -->
-                                </div>
+                                <div class="distribution-legend" id="distributionLegend"></div>
                             </div>
                         </div>
                     </div>
@@ -336,9 +323,14 @@
                                 </div>
                             </div>
                             <div class="activity-list" id="activityList">
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>Faollik yo'q</p>
+                                <div class="activity-item">
+                                    <div class="activity-icon">
+                                        <i class="fas fa-user"></i>
+                                    </div>
+                                    <div class="activity-content">
+                                        <div class="activity-text">Tizim yuklandi</div>
+                                        <div class="activity-time">Hozirgina</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -357,13 +349,12 @@
                     <div class="search-controls">
                         <div class="search-box-inline">
                             <i class="fas fa-search"></i>
-                            <input type="text" id="userSearch" placeholder="Foydalanuvchi qidirish..." onkeyup="searchUsers()">
+                            <input type="text" id="userSearch" placeholder="Foydalanuvchi qidirish...">
                         </div>
                         <select id="userFilter" class="filter-select" onchange="loadUsers()">
                             <option value="all">Barcha holatlar</option>
                             <option value="active">Faol</option>
                             <option value="inactive">Faol emas</option>
-                            <option value="banned">Bloklangan</option>
                         </select>
                     </div>
                     
@@ -378,22 +369,18 @@
                             <tr>
                                 <th>ID</th>
                                 <th>Ism</th>
-                                <th>Familiya</th>
+                                <th>Username</th>
                                 <th>Telefon</th>
                                 <th>Ro'yxatdan o'tgan sana</th>
                                 <th>Holati</th>
                                 <th>Harakatlar</th>
                             </tr>
                         </thead>
-                        <tbody id="usersTableBody">
-                            <!-- Users will be loaded here -->
-                        </tbody>
+                        <tbody id="usersTableBody"></tbody>
                     </table>
                 </div>
                 
-                <div class="pagination" id="usersPagination">
-                    <!-- Pagination will be loaded here -->
-                </div>
+                <div class="pagination" id="usersPagination"></div>
             </div>
 
             <!-- Startaplar sahifasi -->
@@ -407,7 +394,7 @@
                     <div class="search-controls">
                         <div class="search-box-inline">
                             <i class="fas fa-search"></i>
-                            <input type="text" id="startupSearch" placeholder="Startap qidirish..." onkeyup="searchStartups()">
+                            <input type="text" id="startupSearch" placeholder="Startap qidirish...">
                         </div>
                         <select id="startupFilter" class="filter-select" onchange="loadStartups()">
                             <option value="all">Barcha holatlar</option>
@@ -436,15 +423,11 @@
                                 <th>Harakatlar</th>
                             </tr>
                         </thead>
-                        <tbody id="startupsTableBody">
-                            <!-- Startups will be loaded here -->
-                        </tbody>
+                        <tbody id="startupsTableBody"></tbody>
                     </table>
                 </div>
                 
-                <div class="pagination" id="startupsPagination">
-                    <!-- Pagination will be loaded here -->
-                </div>
+                <div class="pagination" id="startupsPagination"></div>
             </div>
 
             <!-- Xabarlar sahifasi -->
@@ -484,7 +467,10 @@
                     <div class="message-history">
                         <h3>Yuborilgan xabarlar</h3>
                         <div class="history-list" id="messageHistory">
-                            <!-- Message history will be loaded here -->
+                            <div class="empty-state">
+                                <i class="fas fa-history"></i>
+                                <p>Xabar tarixi bo'sh</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -590,46 +576,95 @@
                                         <th>Harakatlar</th>
                                     </tr>
                                 </thead>
-                                <tbody id="adminsTableBody">
-                                    <!-- Admins will be loaded here -->
-                                </tbody>
+                                <tbody id="adminsTableBody"></tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Backup sahifasi -->
-            <div class="page" id="backupPage">
+            <!-- Tizim holati sahifasi -->
+            <div class="page" id="systemPage">
                 <div class="page-header">
-                    <h2>Ma'lumotlar bazasi backup</h2>
-                    <p>Ma'lumotlarni saqlash va tiklash</p>
+                    <h2>Tizim holati</h2>
+                    <p>Server va xizmatlar holatini kuzatish</p>
                 </div>
                 
-                <div class="backup-container">
-                    <div class="backup-card">
-                        <div class="backup-header">
-                            <i class="fas fa-database fa-3x"></i>
-                            <h3>Ma'lumotlar bazasi backup</h3>
+                <div class="system-stats">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <h4>CPU foydalanishi</h4>
+                            </div>
+                            <p class="stat-number" id="cpuUsage">0%</p>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="cpuProgress" style="width: 0%"></div>
+                            </div>
                         </div>
                         
-                        <div class="backup-info">
-                            <p><i class="fas fa-info-circle"></i> Backup yaratish orqali barcha ma'lumotlarni saqlab olishingiz mumkin</p>
-                            <p><i class="fas fa-exclamation-triangle"></i> Faqat superadminlar backup yaratishi va yuklab olishi mumkin</p>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <h4>Xotira foydalanishi</h4>
+                            </div>
+                            <p class="stat-number" id="memoryUsage">0%</p>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="memoryProgress" style="width: 0%"></div>
+                            </div>
                         </div>
                         
-                        <div class="backup-actions">
-                            <button class="backup-btn" onclick="createBackup()">
-                                <i class="fas fa-save"></i> Backup yaratish
-                            </button>
-                            <button class="backup-btn secondary" onclick="loadBackups()">
-                                <i class="fas fa-history"></i> Backup tarixi
-                            </button>
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <h4>Disk foydalanishi</h4>
+                            </div>
+                            <p class="stat-number" id="diskUsage">0%</p>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="diskProgress" style="width: 0%"></div>
+                            </div>
                         </div>
                     </div>
                     
-                    <div class="backup-history" id="backupHistory">
-                        <!-- Backup history will be loaded here -->
+                    <div class="services-status">
+                        <h3>Xizmatlar holati</h3>
+                        <div class="services-grid">
+                            <div class="service-item">
+                                <div class="service-icon">
+                                    <i class="fas fa-robot"></i>
+                                </div>
+                                <div class="service-info">
+                                    <h4>Telegram Bot</h4>
+                                    <p id="botStatusText">Yuklanmoqda...</p>
+                                </div>
+                                <div class="service-status">
+                                    <span class="status-dot" id="botStatusDot"></span>
+                                </div>
+                            </div>
+                            
+                            <div class="service-item">
+                                <div class="service-icon">
+                                    <i class="fas fa-database"></i>
+                                </div>
+                                <div class="service-info">
+                                    <h4>Ma'lumotlar bazasi</h4>
+                                    <p id="dbStatusText">Yuklanmoqda...</p>
+                                </div>
+                                <div class="service-status">
+                                    <span class="status-dot" id="dbStatusDot"></span>
+                                </div>
+                            </div>
+                            
+                            <div class="service-item">
+                                <div class="service-icon">
+                                    <i class="fas fa-server"></i>
+                                </div>
+                                <div class="service-info">
+                                    <h4>Web Server</h4>
+                                    <p>Port: 5000</p>
+                                </div>
+                                <div class="service-status">
+                                    <span class="status-dot online"></span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -679,9 +714,33 @@
                         <div class="settings-tab-content" id="botTab">
                             <div class="bot-info">
                                 <h4>Bot ma'lumotlari</h4>
-                                <p>Bot token: <code id="botToken">8265294721:AAEWhiYC2zTYxPbFpYYFezZGNzKHUumoplE</code></p>
-                                <p>Bot status: <span class="status-badge online" id="botStatus">Online</span></p>
+                                <p>Bot status: <span class="status-badge" id="botStatusBadge">Yuklanmoqda...</span></p>
                                 <p>Kanal: <code>@GarajHub_uz</code></p>
+                                <p>Admin ID: <code>Yuklanmoqda...</code></p>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-tab-content" id="notificationsTab">
+                            <div class="notifications-settings">
+                                <h4>Bildirishnoma sozlamalari</h4>
+                                <div class="form-group checkbox-group">
+                                    <input type="checkbox" id="notifyNewUsers" checked>
+                                    <label for="notifyNewUsers">Yangi foydalanuvchilar haqida bildirishnoma</label>
+                                </div>
+                                
+                                <div class="form-group checkbox-group">
+                                    <input type="checkbox" id="notifyNewStartups" checked>
+                                    <label for="notifyNewStartups">Yangi startaplar haqida bildirishnoma</label>
+                                </div>
+                                
+                                <div class="form-group checkbox-group">
+                                    <input type="checkbox" id="notifyStartupApproval" checked>
+                                    <label for="notifyStartupApproval">Startap tasdiqlanganida bildirishnoma</label>
+                                </div>
+                                
+                                <button type="button" class="save-btn" onclick="saveNotificationSettings()">
+                                    <i class="fas fa-save"></i> Saqlash
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -699,7 +758,27 @@
             </div>
             <div class="modal-body">
                 <div id="broadcastModalContent">
-                    <!-- Broadcast form will be here -->
+                    <form id="broadcastFormModal">
+                        <div class="form-group">
+                            <label for="modalMessageText">Xabar matni *</label>
+                            <textarea id="modalMessageText" rows="5" placeholder="Xabar matnini kiriting..." required></textarea>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="modalMessageType">Qabul qiluvchilar *</label>
+                            <select id="modalMessageType" required>
+                                <option value="all">Barcha foydalanuvchilar</option>
+                                <option value="startup_owners">Startap mualliflari</option>
+                                <option value="startup_members">Startap a'zolari</option>
+                                <option value="active">Faol foydalanuvchilar</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="button" class="cancel-btn" onclick="closeModal()">Bekor qilish</button>
+                            <button type="submit" class="submit-btn">Xabarni yuborish</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
@@ -711,7 +790,7 @@
             </div>
             <div class="modal-body">
                 <div id="userDetailContent">
-                    <!-- User details will be loaded here -->
+                    <div class="loading-spinner small"></div>
                 </div>
             </div>
         </div>
@@ -723,7 +802,7 @@
             </div>
             <div class="modal-body">
                 <div id="startupDetailContent">
-                    <!-- Startup details will be loaded here -->
+                    <div class="loading-spinner small"></div>
                 </div>
             </div>
         </div>
@@ -767,18 +846,7 @@
         </div>
     </div>
 
-    <!-- Fullscreen chart modal -->
-    <div class="fullscreen-modal" id="fullscreenChartModal">
-        <div class="fullscreen-header">
-            <h3 id="fullscreenChartTitle">Grafik</h3>
-            <button class="fullscreen-close" onclick="closeFullscreenChart()">&times;</button>
-        </div>
-        <div class="fullscreen-body">
-            <canvas id="fullscreenChart"></canvas>
-        </div>
-    </div>
-
     <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <script src="/static/js/app.js"></script>
 </body>
-</html> 
+</html>
