@@ -35,6 +35,7 @@ def init_db():
         db[STARTUPS_COLLECTION].create_index('category')
         db[STARTUPS_COLLECTION].create_index([('status', ASCENDING), ('created_at', DESCENDING)])
         db[STARTUPS_COLLECTION].create_index([('category', ASCENDING), ('status', ASCENDING)])
+        db[STARTUPS_COLLECTION].create_index('channel_post_id')
         
         # Startup members collection
         db[STARTUP_MEMBERS_COLLECTION].create_index([('startup_id', ASCENDING), ('user_id', ASCENDING)], unique=True)
@@ -206,11 +207,13 @@ def create_startup(name: str, description: str, logo: Optional[str], group_link:
             'required_skills': required_skills or "",
             'category': category or "Boshqa",
             'max_members': max_members,
+            'current_members': 0,
             'status': 'pending',
             'created_at': datetime.now(),
             'started_at': None,
             'ended_at': None,
-            'results': ""
+            'results': "",
+            'channel_post_id': None
         }
         
         result = db[STARTUPS_COLLECTION].insert_one(startup_data)
@@ -235,6 +238,21 @@ def get_startup(startup_id: str) -> Optional[Dict]:
         return startup
     except Exception as e:
         logging.error(f"Error getting startup {startup_id}: {e}")
+        return None
+
+def get_startup_by_post_id(channel_post_id: int) -> Optional[Dict]:
+    """Kanal post ID si bo'yicha startupni topish"""
+    try:
+        startup = db[STARTUPS_COLLECTION].find_one({'channel_post_id': channel_post_id})
+        if startup:
+            if '_id' in startup:
+                startup['_id'] = str(startup['_id'])
+            for date_field in ['created_at', 'started_at', 'ended_at']:
+                if date_field in startup and isinstance(startup[date_field], datetime):
+                    startup[date_field] = startup[date_field].strftime('%Y-%m-%d %H:%M:%S')
+        return startup
+    except Exception as e:
+        logging.error(f"Error getting startup by post ID {channel_post_id}: {e}")
         return None
 
 def get_startups_by_owner(owner_id: int) -> List[Dict]:
@@ -413,6 +431,110 @@ def update_startup_results(startup_id: str, results: str, ended_at: datetime = N
         logging.error(f"Error updating startup results {startup_id}: {e}")
         return False
 
+def update_startup_post_id(startup_id: str, channel_post_id: int):
+    """Kanal post ID sini yangilash"""
+    try:
+        if not ObjectId.is_valid(startup_id):
+            return False
+            
+        result = db[STARTUPS_COLLECTION].update_one(
+            {'_id': ObjectId(startup_id)},
+            {'$set': {'channel_post_id': channel_post_id}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logging.error(f"Error updating startup post ID {startup_id}: {e}")
+        return False
+
+def update_startup_member_count(startup_id: str):
+    """Startup a'zolari sonini yangilash"""
+    try:
+        if not ObjectId.is_valid(startup_id):
+            return False
+            
+        # Qabul qilingan a'zolar sonini hisoblash
+        member_count = db[STARTUP_MEMBERS_COLLECTION].count_documents({
+            'startup_id': startup_id,
+            'status': 'accepted'
+        })
+        
+        result = db[STARTUPS_COLLECTION].update_one(
+            {'_id': ObjectId(startup_id)},
+            {'$set': {'current_members': member_count}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logging.error(f"Error updating startup member count {startup_id}: {e}")
+        return False
+
+def update_startup_current_members(startup_id: str, current_members: int):
+    """Startupning joriy a'zolar sonini to'g'ridan-to'g'ri yangilash"""
+    try:
+        if not ObjectId.is_valid(startup_id):
+            return False
+            
+        result = db[STARTUPS_COLLECTION].update_one(
+            {'_id': ObjectId(startup_id)},
+            {'$set': {'current_members': current_members}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logging.error(f"Error updating startup current members {startup_id}: {e}")
+        return False
+
+def get_startup_member_count(startup_id: str) -> int:
+    """Startup a'zolari sonini olish"""
+    try:
+        if not ObjectId.is_valid(startup_id):
+            return 0
+            
+        startup = db[STARTUPS_COLLECTION].find_one(
+            {'_id': ObjectId(startup_id)},
+            {'current_members': 1}
+        )
+        
+        if startup and 'current_members' in startup:
+            return startup['current_members']
+        
+        # Agar current_members maydoni bo'lmasa, hisoblaymiz
+        member_count = db[STARTUP_MEMBERS_COLLECTION].count_documents({
+            'startup_id': startup_id,
+            'status': 'accepted'
+        })
+        
+        # Yangilash
+        db[STARTUPS_COLLECTION].update_one(
+            {'_id': ObjectId(startup_id)},
+            {'$set': {'current_members': member_count}}
+        )
+        
+        return member_count
+    except Exception as e:
+        logging.error(f"Error getting startup member count {startup_id}: {e}")
+        return 0
+
+def get_active_startup_posts() -> List[Dict]:
+    """Faol startuplarning kanal post ma'lumotlarini olish"""
+    try:
+        startups = list(db[STARTUPS_COLLECTION].find(
+            {
+                'status': 'active',
+                'channel_post_id': {'$ne': None}
+            },
+            {'_id': 1, 'name': 1, 'channel_post_id': 1, 'current_members': 1, 'max_members': 1}
+        ))
+        
+        formatted_startups = []
+        for startup in startups:
+            if '_id' in startup:
+                startup['_id'] = str(startup['_id'])
+            formatted_startups.append(startup)
+        
+        return formatted_startups
+    except Exception as e:
+        logging.error(f"Error getting active startup posts: {e}")
+        return []
+
 def get_recent_startups(limit: int = 10) -> List[Dict]:
     """So'nggi startuplar"""
     try:
@@ -459,6 +581,11 @@ def add_startup_member(startup_id: str, user_id: int, status: str = 'pending'):
         }
         
         result = db[STARTUP_MEMBERS_COLLECTION].insert_one(member_data)
+        
+        # Agar qabul qilinsa, a'zolar sonini yangilash
+        if status == 'accepted':
+            update_startup_member_count(startup_id)
+        
         return str(result.inserted_id)
     except DuplicateKeyError:
         logging.warning(f"Duplicate member {user_id} for startup {startup_id}")
@@ -488,10 +615,21 @@ def update_join_request(request_id: str, status: str):
         if not ObjectId.is_valid(request_id):
             return False
             
+        # Avval so'rovni topamiz
+        request = db[STARTUP_MEMBERS_COLLECTION].find_one({'_id': ObjectId(request_id)})
+        if not request:
+            return False
+            
+        # Statusni yangilash
         result = db[STARTUP_MEMBERS_COLLECTION].update_one(
             {'_id': ObjectId(request_id)},
             {'$set': {'status': status}}
         )
+        
+        # Agar qabul qilinsa, a'zolar sonini yangilash
+        if status == 'accepted' and request.get('status') != 'accepted':
+            update_startup_member_count(request['startup_id'])
+        
         return result.modified_count > 0
     except Exception as e:
         logging.error(f"Error updating join request {request_id}: {e}")
