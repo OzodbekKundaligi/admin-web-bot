@@ -136,7 +136,7 @@ def show_main_menu(message_or_call):
     user_id = message_or_call.from_user.id if isinstance(message_or_call, types.CallbackQuery) else message_or_call.from_user.id
     clear_user_state(user_id)
     
-    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!\n\n➡️ <b>Asosiy menyu:</b>"
+    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!\n\n</b>"
     
     bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
 
