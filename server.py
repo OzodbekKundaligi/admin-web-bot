@@ -708,21 +708,19 @@ def approve_startup(startup_id):
                         user = get_user(startup['owner_id'])
                         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
                         
-                        channel_text = (
-                            f"🚀 <b>{startup['name']}</b>\n\n"
-                            f"📝 {startup['description']}\n\n"
-                            f"👤 <b>Muallif:</b> {owner_name}\n"
-                            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
-                            f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
-                            f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
-                            f"👉 <b>Startupga qo'shilish uchun @garajhub_bot ni oching.</b>\n"
-                            f"➕ <b>O'z startupingizni yaratish uchun:</b> @garajhub_bot"
-                        )
-                        
-                        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-                        markup = InlineKeyboardMarkup()
-                        markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish', 
-                                                       url=f"https://t.me/garajhub_bot?start=join_{startup_id}"))
+                          channel_text = (
+            f"🚀 <b>{startup['name']}</b>\n\n"
+            f"📝 {startup['description']}\n\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
+            f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
+            f"👉 <b>Startupga qo'shilish uchun pastdagi tugmani bosing.</b>\n"
+            f"➕ <b>O'z startupingizni yaratish uchun:</b> @{bot.get_me().username}"
+        )
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup_id}'))
                         
                         if startup.get('logo'):
                             bot.send_photo(CHANNEL_USERNAME, startup['logo'], caption=channel_text, reply_markup=markup, parse_mode='HTML')
