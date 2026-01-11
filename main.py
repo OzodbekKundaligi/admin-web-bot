@@ -81,6 +81,46 @@ def create_main_menu(user_id: int):
     
     return markup
 
+# YANGI: Telefon raqam so'rash funksiyasi
+def request_phone_number(message):
+    """Foydalanuvchidan telefon raqamini so'rash"""
+    user_id = message.from_user.id
+    set_user_state(user_id, 'waiting_phone')
+    
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
+    markup.add(KeyboardButton('🔙 Orqaga'))
+    
+    bot.send_message(
+        message.chat.id,
+        "📝 <b>Ro'yxatdan o'tish</b>\n\n"
+        "Iltimos, telefon raqamingizni yuboring:",
+        reply_markup=markup
+    )
+
+# YANGI: Xush kelibsiz xabari
+def send_welcome_back_message(message_or_call, first_name):
+    """Avval ro'yxatdan o'tgan foydalanuvchi uchun"""
+    if isinstance(message_or_call, types.CallbackQuery):
+        chat_id = message_or_call.message.chat.id
+        user_id = message_or_call.from_user.id
+        try:
+            bot.delete_message(chat_id, message_or_call.message.message_id)
+        except:
+            pass
+    else:
+        chat_id = message_or_call.chat.id
+        user_id = message_or_call.from_user.id
+    
+    clear_user_state(user_id)
+    
+    bot.send_message(
+        chat_id,
+        f"Qaytganingiz bilan, <b>{first_name}</b>! 👋\n\n"
+        f"Menyudan foydalaning:",
+        reply_markup=create_main_menu(user_id)
+    )
+
 # Kanalda post yangilash funksiyasi
 def update_channel_post(startup_id: str):
     try:
@@ -152,20 +192,30 @@ def update_channel_post(startup_id: str):
         logging.error(f"Update channel post xatosi: {e}")
         return False
 
-# 1. START - BOSHLASH
+# 1. START - BOSHLASH (YANGILANGAN)
 @bot.message_handler(commands=['start', 'help', 'boshlash'])
 def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or ""
     
-    save_user(user_id, username, first_name)
+    # Foydalanuvchi bazada bormi tekshirish
+    user = get_user(user_id)
     
     # Kanalga obuna tekshirish
     try:
         chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         if chat_member.status in ['member', 'administrator', 'creator']:
-            show_main_menu(message)
+            # Agar yangi foydalanuvchi
+            if not user:
+                save_user(user_id, username, first_name)
+                request_phone_number(message)  # ← TELEFON SO'RAYDI
+            else:
+                # Telefon borligini tekshirish
+                if not user.get('phone'):
+                    request_phone_number(message)  # ← TELEFON SO'RAYDI
+                else:
+                    send_welcome_back_message(message, first_name)  # ← XO'SH KELIBSIZ
         else:
             ask_for_subscription(message)
     except Exception as e:
@@ -192,13 +242,63 @@ def check_subscription_callback(call):
     try:
         chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         if chat_member.status in ['member', 'administrator', 'creator']:
-            show_main_menu(call)
-            bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi")
+            # Foydalanuvchi tekshirish
+            user = get_user(user_id)
+            
+            if not user:
+                # Yangi foydalanuvchi
+                username = call.from_user.username or ""
+                first_name = call.from_user.first_name or ""
+                save_user(user_id, username, first_name)
+                
+                bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi")
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                request_phone_number(call.message)  # ← TELEFON SO'RAYDI
+            else:
+                # Telefon borligini tekshirish
+                if not user.get('phone'):
+                    bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi")
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
+                    request_phone_number(call.message)  # ← TELEFON SO'RAYDI
+                else:
+                    # Mavjud foydalanuvchi
+                    first_name = user.get('first_name', 'Foydalanuvchi')
+                    bot.answer_callback_query(call.id, "✅ Obuna tasdiqlandi")
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
+                    send_welcome_back_message(call.message, first_name)  # ← XO'SH KELIBSIZ
         else:
             bot.answer_callback_query(call.id, "❌ Iltimos, kanalga obuna bo'ling!", show_alert=True)
     except Exception as e:
         logging.error(f"Obuna tekshirishda xatolik: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+# YANGI: Telefon qabul qilish handler
+@bot.message_handler(content_types=['contact'])
+def handle_contact(message):
+    """Telefon raqamni qabul qilish"""
+    user_id = message.from_user.id
+    
+    if get_user_state(user_id) == 'waiting_phone':
+        # Telefon raqamni olish
+        phone = message.contact.phone_number
+        
+        # Bazaga saqlash
+        update_user_field(user_id, 'phone', phone)
+        
+        # State tozalash
+        clear_user_state(user_id)
+        
+        # Foydalanuvchi ismi
+        user = get_user(user_id)
+        first_name = user.get('first_name', 'Foydalanuvchi')
+        
+        # Muvaffaqiyatli xabar
+        bot.send_message(
+            message.chat.id,
+            f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n"
+            f"Menyudan foydalaning:",
+            reply_markup=create_main_menu(user_id)
+        )
 
 def show_main_menu(message_or_call):
     if isinstance(message_or_call, types.CallbackQuery):
@@ -726,6 +826,7 @@ def show_profile(message):
     
     user = get_user(user_id)
     if not user:
+        # Agar foydalanuvchi hali ro'yxatdan o'tmagan bo'lsa
         save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
         user = get_user(user_id)
     
@@ -772,12 +873,17 @@ def handle_edit_profile(call):
         bot.register_next_step_handler(msg, process_last_name)
     
     elif call.data == 'edit_phone':
-        set_user_state(user_id, 'editing_phone')
-        msg = bot.send_message(call.message.chat.id, 
-                              "📱 <b>Telefon raqamingizni kiriting:</b>\n\n"
-                              "Masalan: <code>+998901234567</code>", 
-                              reply_markup=create_back_button())
-        bot.register_next_step_handler(msg, process_phone)
+        # Telefon raqamni qayta so'rash uchun
+        set_user_state(user_id, 'waiting_phone_edit')
+        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
+        markup.add(KeyboardButton('🔙 Orqaga'))
+        
+        bot.send_message(
+            call.message.chat.id,
+            "📱 <b>Yangi telefon raqamingizni yuboring:</b>",
+            reply_markup=markup
+        )
     
     elif call.data == 'edit_gender':
         markup = InlineKeyboardMarkup(row_width=2)
@@ -819,6 +925,32 @@ def handle_edit_profile(call):
     
     bot.answer_callback_query(call.id)
 
+# YANGI: Telefon tahrirlash
+@bot.message_handler(content_types=['contact'], func=lambda message: get_user_state(message.from_user.id) == 'waiting_phone_edit')
+def handle_contact_edit(message):
+    """Profil tahrirlashda telefon raqamni qabul qilish"""
+    user_id = message.from_user.id
+    
+    if get_user_state(user_id) == 'waiting_phone_edit':
+        # Telefon raqamni olish
+        phone = message.contact.phone_number
+        
+        # Bazaga saqlash
+        update_user_field(user_id, 'phone', phone)
+        
+        # State tozalash
+        clear_user_state(user_id)
+        
+        # Muvaffaqiyatli xabar
+        bot.send_message(
+            message.chat.id,
+            "✅ <b>Telefon raqami yangilandi!</b>",
+            reply_markup=ReplyKeyboardMarkup(resize_keyboard=True)
+        )
+        
+        # Profilga qaytish
+        show_profile(message)
+
 def process_first_name(message):
     user_id = message.from_user.id
     
@@ -842,19 +974,6 @@ def process_last_name(message):
     
     update_user_field(user_id, 'last_name', message.text)
     bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-def process_phone(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    update_user_field(user_id, 'phone', message.text)
-    bot.send_message(message.chat.id, "✅ <b>Telefon raqami muvaffaqiyatli saqlandi</b>")
     clear_user_state(user_id)
     show_profile(message)
 
@@ -931,6 +1050,18 @@ def process_bio(message):
 @bot.message_handler(func=lambda message: message.text == '🚀 Startup yaratish')
 def start_creation(message):
     user_id = message.from_user.id
+    
+    # Telefon raqam borligini tekshirish
+    user = get_user(user_id)
+    if not user or not user.get('phone'):
+        bot.send_message(
+            message.chat.id,
+            "📞 <b>Avval telefon raqamingizni kiritishingiz kerak!</b>\n\n"
+            "Iltimos, /start buyrug'ini yuboring va telefon raqamingizni yuboring.",
+            reply_markup=create_back_button()
+        )
+        return
+    
     set_user_state(user_id, 'creating_startup')
     
     msg = bot.send_message(message.chat.id, 
@@ -2099,6 +2230,10 @@ def handle_back_button(message):
         show_main_menu(message)
     
     elif user_state == 'in_admin_panel' or user_state == 'broadcasting_message':
+        clear_user_state(user_id)
+        show_main_menu(message)
+    
+    elif user_state == 'waiting_phone' or user_state == 'waiting_phone_edit':
         clear_user_state(user_id)
         show_main_menu(message)
     
