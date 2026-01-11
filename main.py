@@ -70,7 +70,7 @@ def create_main_menu(user_id: int):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
         KeyboardButton('🌐 Startaplar'),
-        KeyboardButton('🚀 Startup yaratish'),
+        KeyboardButton('➕ Startup yaratish'),
         KeyboardButton('📌 Startaplarim'),
         KeyboardButton('👤 Profil')
     ]
@@ -116,8 +116,7 @@ def send_welcome_back_message(message_or_call, first_name):
     
     bot.send_message(
         chat_id,
-        f"Qaytganingiz bilan, <b>{first_name}</b>! 👋\n\n"
-        f"Menyudan foydalaning:",
+        f"Qaytganingiz bilan, <b>{first_name}</b>! 👋\n\n",
         reply_markup=create_main_menu(user_id)
     )
 
@@ -230,7 +229,6 @@ def ask_for_subscription(message):
     )
     bot.send_message(
         message.chat.id,
-        "🤖 <b>GarajHub</b>\n\n"
         "Davom etish uchun rasmiy kanalimizga obuna bo'ling:\n"
         f"👉 {CHANNEL_USERNAME}",
         reply_markup=markup
@@ -295,8 +293,7 @@ def handle_contact(message):
         # Muvaffaqiyatli xabar
         bot.send_message(
             message.chat.id,
-            f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n"
-            f"Menyudan foydalaning:",
+            f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
             reply_markup=create_main_menu(user_id)
         )
 
@@ -314,7 +311,7 @@ def show_main_menu(message_or_call):
     user_id = message_or_call.from_user.id if isinstance(message_or_call, types.CallbackQuery) else message_or_call.from_user.id
     clear_user_state(user_id)
     
-    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!\n\n➡️ <b>Asosiy menyu:</b>"
+    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!</b>"
     
     bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
 
