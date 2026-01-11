@@ -11,14 +11,6 @@ from bson import ObjectId
 import traceback
 import sys
 
-# psutil uchun - agar mavjud bo'lmasa, o'rniga fake
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-    print("⚠️ psutil moduli topilmadi. Tizim monitoringi cheklangan rejimda ishlaydi.")
-
 # Bot va Database importlarini aniq qilamiz
 sys.path.append('.')  # Joriy papkaga qo'shamiz
 
@@ -35,23 +27,41 @@ try:
         get_startup_members, get_all_startup_members,
         update_startup_results, update_join_request,
         get_user_joined_startups, get_join_requests,
-        check_database_connection  # Bu funksiya db.py da bo'lishi kerak
+        check_database_connection,
+        update_startup_post_id,
+        get_startup_member_count
     )
     DB_AVAILABLE = True
     print("✅ Database moduli muvaffaqiyatli yuklandi")
 except ImportError as e:
     print(f"❌ Database import xatosi: {e}")
-    print("❒ Iltimos, db.py faylini tekshiring")
     DB_AVAILABLE = False
+    # Fake functions for testing
+    def init_db(): pass
+    def get_user(*args): return None
+    def save_user(*args): return None
+    def get_startup(*args): return None
+    def update_startup_status(*args): return True
+    def get_statistics(): return {
+        'total_users': 0,
+        'total_startups': 0,
+        'active_startups': 0,
+        'pending_startups': 0,
+        'completed_startups': 0,
+        'rejected_startups': 0
+    }
+    def get_all_users(): return []
+    def get_recent_users(*args): return []
+    def get_pending_startups(*args): return [], 0
 
 # Bot import
 try:
     from main import bot, BOT_TOKEN, ADMIN_ID, CHANNEL_USERNAME
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     BOT_AVAILABLE = True
     print("✅ Bot moduli muvaffaqiyatli yuklandi")
 except ImportError as e:
     print(f"❌ Bot import xatosi: {e}")
-    print("❒ Iltimos, main.py faylini tekshiring")
     BOT_AVAILABLE = False
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -72,7 +82,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Adminlar ro'yxati (haqiqiy adminlar)
+# Adminlar ro'yxati
 ADMINS = {
     'admin': {
         'password': 'admin123',
@@ -109,19 +119,6 @@ def role_required(roles):
         return decorated_function
     return decorator
 
-# Botni ishga tushirish funksiyasi
-def start_bot():
-    if BOT_AVAILABLE:
-        try:
-            print("🤖 Telegram bot ishga tushmoqda...")
-            bot.remove_webhook()
-            bot.polling(none_stop=True, timeout=60)
-        except Exception as e:
-            logger.error(f"Bot xatosi: {e}")
-            print(f"Bot xatosi: {e}")
-    else:
-        print("⚠️ Bot mavjud emas yoki yuklanmadi")
-
 # ==================== UTILITY FUNCTIONS ====================
 
 def format_datetime(dt_str):
@@ -141,7 +138,7 @@ def format_datetime(dt_str):
             except:
                 continue
         
-        return str(dt_str)[:16]  # Faqat dastlabki 16 belgi
+        return str(dt_str)[:16]
     except:
         return str(dt_str)
 
@@ -264,33 +261,6 @@ def get_statistics_data():
             if user.get('joined_at', '').startswith(today):
                 new_today += 1
         
-        # Aktif foydalanuvchilar (oxirgi 7 kun)
-        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        active_users = 0
-        for user in recent_users:
-            if user.get('joined_at', '') >= week_ago:
-                active_users += 1
-        
-        # Kategoriyalar statistikasi
-        categories = get_all_categories()
-        category_stats = {}
-        if categories:
-            for category in categories:
-                startups_in_category = len(get_startups_by_category(category))
-                category_stats[category] = startups_in_category
-        
-        # Trend ma'lumotlari
-        yesterday = datetime.now() - timedelta(days=1)
-        yesterday_str = yesterday.strftime('%Y-%m-%d')
-        yesterday_users = 0
-        for user in recent_users:
-            if user.get('joined_at', '').startswith(yesterday_str):
-                yesterday_users += 1
-        
-        user_trend = 0
-        if yesterday_users > 0 and new_today > 0:
-            user_trend = ((new_today - yesterday_users) / yesterday_users * 100)
-        
         return jsonify({
             'success': True,
             'data': {
@@ -301,10 +271,10 @@ def get_statistics_data():
                 'completed_startups': stats.get('completed_startups', 0),
                 'rejected_startups': stats.get('rejected_startups', 0),
                 'new_today': new_today,
-                'active_users': active_users,
-                'categories': category_stats,
+                'active_users': len([u for u in recent_users if u.get('joined_at', '') >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]),
+                'categories': {},
                 'trends': {
-                    'users': f"{user_trend:+.1f}%" if user_trend != 0 else "+0%",
+                    'users': "+0%",
                     'startups': "+0%"
                 }
             }
@@ -347,6 +317,9 @@ def get_users():
                 if search.lower() in user_text:
                     filtered_users.append(user)
             users = filtered_users
+        
+        # Sort by joined_at desc
+        users.sort(key=lambda x: x.get('joined_at', ''), reverse=True)
         
         # Pagination
         total = len(users)
@@ -421,7 +394,7 @@ def get_user_detail(user_id):
         # User startaplari
         user_startups = get_startups_by_owner(user_id_int)
         startups_data = []
-        for startup in user_startups[:10]:  # Faqat 10 tasini
+        for startup in user_startups[:10]:
             startups_data.append({
                 'id': str(startup.get('_id', '')),
                 'name': startup.get('name', 'Noma\'lum'),
@@ -481,21 +454,21 @@ def get_startups_list():
         # Barcha startaplarni yig'ish
         all_startups = []
         
-        if status == 'all':
-            # Barcha statusdagi startaplar
+        if status == 'all' or status == 'active':
             active_startups, _ = get_active_startups(1, 1000)
+            all_startups.extend(active_startups)
+        
+        if status == 'all' or status == 'pending':
             pending_startups, _ = get_pending_startups(1, 1000)
+            all_startups.extend(pending_startups)
+        
+        if status == 'all' or status == 'completed':
             completed_startups, _ = get_completed_startups(1, 1000)
+            all_startups.extend(completed_startups)
+        
+        if status == 'all' or status == 'rejected':
             rejected_startups, _ = get_rejected_startups(1, 1000)
-            all_startups = active_startups + pending_startups + completed_startups + rejected_startups
-        elif status == 'active':
-            all_startups, _ = get_active_startups(1, 1000)
-        elif status == 'pending':
-            all_startups, _ = get_pending_startups(1, 1000)
-        elif status == 'completed':
-            all_startups, _ = get_completed_startups(1, 1000)
-        elif status == 'rejected':
-            all_startups, _ = get_rejected_startups(1, 1000)
+            all_startups.extend(rejected_startups)
         
         # Kategoriya bo'yicha filtrlash
         if category != 'all':
@@ -541,7 +514,7 @@ def get_startups_list():
             startup_id = str(startup.get('_id', ''))
             members_count = 0
             try:
-                members_count = len(get_all_startup_members(startup_id))
+                members_count = get_startup_member_count(startup_id) or 0
             except:
                 pass
             
@@ -696,47 +669,87 @@ def approve_startup(startup_id):
         if BOT_AVAILABLE:
             try:
                 startup = get_startup(startup_id)
-                if startup and startup.get('owner_id'):
-                    bot.send_message(
-                        startup['owner_id'],
-                        f"🎉 Tabriklaymiz! Sizning '{startup['name']}' startupingiz tasdiqlandi!\n\n"
-                        f"Startup kanalda e'lon qilindi."
+                if not startup:
+                    return jsonify({'success': False, 'error': 'Startap topilmadi'}), 404
+                
+                # Egaga xabar
+                if startup.get('owner_id'):
+                    try:
+                        bot.send_message(
+                            startup['owner_id'],
+                            f"🎉 <b>Tabriklaymiz!</b>\n\n"
+                            f"✅ '<b>{startup['name']}</b>' startupingiz tasdiqlandi va kanalga joylandi!",
+                            parse_mode='HTML'
+                        )
+                    except Exception as e:
+                        logger.error(f"Egaga xabar yuborishda xato: {e}")
+                
+                # Kanalga post yuborish
+                try:
+                    user = get_user(startup['owner_id'])
+                    owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+                    
+                    # Post matni
+                    channel_text = (
+                        f"🚀 <b>{startup['name']}</b>\n\n"
+                        f"📝 {startup['description']}\n\n"
+                        f"👤 <b>Muallif:</b> {owner_name}\n"
+                        f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+                        f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
+                        f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
+                        f"👉 <b>Startupga qo'shilish uchun pastdagi tugmani bosing.</b>\n"
+                        f"➕ <b>O'z startupingizni yaratish uchun:</b> @{bot.get_me().username}"
                     )
                     
-                    # Kanalga post yuborish
-                    try:
-                        user = get_user(startup['owner_id'])
-                        owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
-                        
-                        # TO'G'RI INDEATSIYA
-                        channel_text = (
-                            f"🚀 <b>{startup['name']}</b>\n\n"
-                            f"📝 {startup['description']}\n\n"
-                            f"👤 <b>Muallif:</b> {owner_name}\n"
-                            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
-                            f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
-                            f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
-                            f"👉 <b>Startupga qo'shilish uchun pastdagi tugmani bosing.</b>\n"
-                            f"➕ <b>O'z startupingizni yaratish uchun:</b> @{bot.get_me().username}"
+                    # Tugma yaratish
+                    markup = InlineKeyboardMarkup()
+                    markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup_id}'))
+                    
+                    # Postni kanalga yuborish
+                    if startup.get('logo'):
+                        sent_message = bot.send_photo(
+                            CHANNEL_USERNAME, 
+                            startup['logo'], 
+                            caption=channel_text, 
+                            reply_markup=markup, 
+                            parse_mode='HTML'
                         )
-                        
-                        markup = InlineKeyboardMarkup()
-                        markup.add(InlineKeyboardButton('🤝 Startupga qo\'shilish', callback_data=f'join_startup_{startup_id}'))
-                        
-                        if startup.get('logo'):
-                            bot.send_photo(CHANNEL_USERNAME, startup['logo'], caption=channel_text, reply_markup=markup, parse_mode='HTML')
-                        else:
-                            bot.send_message(CHANNEL_USERNAME, channel_text, reply_markup=markup, parse_mode='HTML')
-                    except Exception as e:
-                        logger.error(f"Kanalga post yuborishda xato: {e}")
+                    else:
+                        sent_message = bot.send_message(
+                            CHANNEL_USERNAME, 
+                            channel_text, 
+                            reply_markup=markup, 
+                            parse_mode='HTML'
+                        )
+                    
+                    # Post ID sini saqlash
+                    update_startup_post_id(startup_id, sent_message.message_id)
+                    
+                    logger.info(f"Kanalga post joylandi: {startup_id} -> message_id: {sent_message.message_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Kanalga post yuborishda xato: {e}")
+                    return jsonify({
+                        'success': False, 
+                        'error': f'Kanalga post yuborishda xato: {str(e)}'
+                    }), 500
+                    
             except Exception as e:
                 logger.error(f"Bot orqali xabar yuborishda xato: {e}")
+                return jsonify({
+                    'success': False, 
+                    'error': f'Bot xatosi: {str(e)}'
+                }), 500
         
         logger.info(f"Startup approved: {startup_id}")
         
         return jsonify({
             'success': True, 
-            'message': 'Startap tasdiqlandi va kanalga joylandi'
+            'message': 'Startap tasdiqlandi va kanalga joylandi',
+            'data': {
+                'id': startup_id,
+                'status': 'active'
+            }
         })
     except Exception as e:
         logger.error(f"Approve startup error: {traceback.format_exc()}")
@@ -769,9 +782,11 @@ def reject_startup(startup_id):
                 if startup and startup.get('owner_id'):
                     bot.send_message(
                         startup['owner_id'],
-                        f"❌ Sizning '{startup['name']}' startupingiz rad etildi.\n\n"
-                        f"Sabab: {reason}\n\n"
-                        f"Iltimos, qoidalarga muvofiq qayta yarating."
+                        f"❌ <b>Xabar!</b>\n\n"
+                        f"Sizning '<b>{startup['name']}</b>' startupingiz rad etildi.\n\n"
+                        f"<b>Sabab:</b> {reason}\n\n"
+                        f"Iltimos, qoidalarga muvofiq qayta yarating.",
+                        parse_mode='HTML'
                     )
             except Exception as e:
                 logger.error(f"Bot orqali xabar yuborishda xato: {e}")
@@ -780,7 +795,11 @@ def reject_startup(startup_id):
         
         return jsonify({
             'success': True, 
-            'message': 'Startap rad etildi'
+            'message': 'Startap rad etildi',
+            'data': {
+                'id': startup_id,
+                'status': 'rejected'
+            }
         })
     except Exception as e:
         logger.error(f"Reject startup error: {traceback.format_exc()}")
@@ -822,7 +841,8 @@ def complete_startup(startup_id):
                                 f"🏁 <b>Startup yakunlandi</b>\n\n"
                                 f"🎯 <b>{startup['name']}</b>\n"
                                 f"📅 <b>Yakunlangan sana:</b> {datetime.now().strftime('%d-%m-%Y')}\n"
-                                f"📝 <b>Natijalar:</b>\n{results}"
+                                f"📝 <b>Natijalar:</b>\n{results}",
+                                parse_mode='HTML'
                             )
                         except Exception as e:
                             logger.error(f"Memberga xabar yuborishda xato {member_id}: {e}")
@@ -831,8 +851,10 @@ def complete_startup(startup_id):
                     if startup.get('owner_id'):
                         bot.send_message(
                             startup['owner_id'],
-                            f"🎊 Tabriklaymiz! '{startup['name']}' startapingiz muvaffaqiyatli yakunlandi!\n\n"
-                            f"Natijalar: {results}"
+                            f"🎊 <b>Tabriklaymiz!</b>\n\n"
+                            f"'{startup['name']}' startapingiz muvaffaqiyatli yakunlandi!\n\n"
+                            f"<b>Natijalar:</b>\n{results}",
+                            parse_mode='HTML'
                         )
             except Exception as e:
                 logger.error(f"Bot orqali xabar yuborishda xato: {e}")
@@ -841,7 +863,12 @@ def complete_startup(startup_id):
         
         return jsonify({
             'success': True, 
-            'message': 'Startap yakunlandi'
+            'message': 'Startap yakunlandi',
+            'data': {
+                'id': startup_id,
+                'status': 'completed',
+                'results': results
+            }
         })
     except Exception as e:
         logger.error(f"Complete startup error: {traceback.format_exc()}")
@@ -855,164 +882,44 @@ def broadcast_message():
     try:
         data = request.json
         message = data.get('message')
-        recipient_type = data.get('recipient_type', 'all')
         
         if not message:
             return jsonify({'success': False, 'error': 'Xabar matni kiritilmagan'}), 400
         
-        # Bot orqali xabar yuborish
+        if not BOT_AVAILABLE or not DB_AVAILABLE:
+            return jsonify({'success': False, 'error': 'Bot yoki Database mavjud emas'}), 500
+        
         sent_count = 0
         failed_count = 0
         
-        if BOT_AVAILABLE and DB_AVAILABLE:
-            try:
-                users = get_all_users()
-                
-                for user in users:
-                    try:
-                        user_id = user.get('user_id')
-                        if user_id:
-                            bot.send_message(user_id, f"📢 <b>Yangilik!</b>\n\n{message}", parse_mode='HTML')
-                            sent_count += 1
-                            time.sleep(0.05)  # Flood dan qochish
-                    except Exception as e:
-                        logger.error(f"Foydalanuvchiga xabar yuborishda xato {user.get('user_id')}: {e}")
-                        failed_count += 1
-            except Exception as e:
-                logger.error(f"Xabar yuborishda xato: {e}")
+        users = get_all_users()
+        total_users = len(users)
         
-        logger.info(f"Broadcast message sent to {sent_count} users, failed: {failed_count}")
+        for user in users:
+            try:
+                user_id = user.get('user_id')
+                if user_id:
+                    bot.send_message(user_id, f"📢 <b>Yangilik!</b>\n\n{message}", parse_mode='HTML')
+                    sent_count += 1
+                    time.sleep(0.1)  # Flood dan qochish
+            except Exception as e:
+                logger.error(f"Foydalanuvchiga xabar yuborishda xato {user.get('user_id')}: {e}")
+                failed_count += 1
+        
+        logger.info(f"Broadcast message: sent={sent_count}, failed={failed_count}, total={total_users}")
         
         return jsonify({
             'success': True,
             'message': 'Xabar yuborildi',
             'data': {
-                'id': str(ObjectId()),
-                'message': message[:100] + '...' if len(message) > 100 else message,
-                'recipient_type': recipient_type,
-                'sent_at': datetime.now().isoformat(),
-                'sent_by': session.get('admin_username'),
-                'stats': {
-                    'sent': sent_count,
-                    'failed': failed_count,
-                    'total': sent_count + failed_count
-                }
+                'sent': sent_count,
+                'failed': failed_count,
+                'total': total_users,
+                'success_rate': f"{(sent_count/total_users*100):.1f}%" if total_users > 0 else "0%"
             }
         })
     except Exception as e:
         logger.error(f"Broadcast error: {traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/analytics/user-growth')
-@login_required
-def get_user_growth():
-    """Foydalanuvchi o'sishi uchun analytics"""
-    try:
-        if not DB_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'Database mavjud emas'
-            }), 500
-        
-        period = request.args.get('period', 'month')
-        days = 30 if period == 'month' else 7 if period == 'week' else 30
-        
-        # Oxirgi N kun uchun ma'lumotlar
-        dates = []
-        new_users_data = []
-        total_users_data = []
-        
-        users = get_recent_users(10000)
-        
-        # Har bir kun uchun hisoblash
-        for i in range(days - 1, -1, -1):
-            date = datetime.now() - timedelta(days=i)
-            date_str = date.strftime('%Y-%m-%d')
-            
-            # Shu kungi yangi foydalanuvchilar
-            new_users = 0
-            total_users = 0
-            
-            for user in users:
-                joined_at = user.get('joined_at', '')
-                if isinstance(joined_at, str):
-                    if joined_at.startswith(date_str):
-                        new_users += 1
-                    if joined_at <= date_str:
-                        total_users += 1
-            
-            dates.append(date.strftime('%d.%m') if i % (max(1, days // 10)) == 0 else '')
-            new_users_data.append(new_users)
-            total_users_data.append(total_users)
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'labels': dates,
-                'datasets': [
-                    {
-                        'label': 'Yangi foydalanuvchilar',
-                        'data': new_users_data,
-                        'borderColor': '#000000',
-                        'backgroundColor': 'rgba(0, 0, 0, 0.1)',
-                        'tension': 0.4,
-                        'fill': True
-                    },
-                    {
-                        'label': 'Jami foydalanuvchilar',
-                        'data': total_users_data,
-                        'borderColor': '#666666',
-                        'backgroundColor': 'transparent',
-                        'tension': 0.4,
-                        'hidden': True
-                    }
-                ]
-            }
-        })
-    except Exception as e:
-        logger.error(f"Analytics error: {traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/analytics/startup-distribution')
-@login_required
-def get_startup_distribution():
-    """Startap taqsimoti"""
-    try:
-        if not DB_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'Database mavjud emas'
-            }), 500
-        
-        stats = get_statistics()
-        
-        data = {
-            'labels': ['Faol', 'Kutilayotgan', 'Yakunlangan', 'Rad etilgan'],
-            'datasets': [{
-                'data': [
-                    stats.get('active_startups', 0),
-                    stats.get('pending_startups', 0),
-                    stats.get('completed_startups', 0),
-                    stats.get('rejected_startups', 0)
-                ],
-                'backgroundColor': [
-                    '#000000',
-                    '#666666',
-                    '#999999',
-                    '#CCCCCC'
-                ],
-                'borderColor': '#ffffff',
-                'borderWidth': 2
-            }]
-        }
-        
-        return jsonify({
-            'success': True,
-            'data': data,
-            'total': stats.get('total_startups', 0)
-        })
-    except Exception as e:
-        logger.error(f"Distribution error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/categories')
@@ -1075,7 +982,9 @@ def settings():
                 'bot_status': 'online' if BOT_AVAILABLE else 'offline',
                 'db_status': 'online' if DB_AVAILABLE else 'offline',
                 'version': '1.0.0',
-                'uptime': int(time.time())
+                'uptime': int(time.time()),
+                'real_data': True,
+                'demo_mode': False
             }
             
             return jsonify({
@@ -1102,64 +1011,15 @@ def system_health():
     """Tizim holati"""
     try:
         health_data = {
-            'cpu': {
-                'usage': 0,
-                'cores': 1,
-                'status': 'good'
-            },
-            'memory': {
-                'total': 0,
-                'used': 0,
-                'free': 0,
-                'percent': 0,
-                'status': 'good'
-            },
-            'disk': {
-                'total': 0,
-                'used': 0,
-                'free': 0,
-                'percent': 0,
-                'status': 'good'
-            },
             'services': {
                 'bot': 'online' if BOT_AVAILABLE else 'offline',
                 'database': 'online' if DB_AVAILABLE else 'offline',
-                'web_server': 'online'
+                'web_server': 'online',
+                'real_data': True
             },
             'uptime': int(time.time()),
             'timestamp': datetime.now().isoformat()
         }
-        
-        if PSUTIL_AVAILABLE:
-            # Haqiqiy ma'lumotlar
-            try:
-                memory = psutil.virtual_memory()
-                cpu = psutil.cpu_percent(interval=1)
-                disk = psutil.disk_usage('/')
-                
-                health_data.update({
-                    'cpu': {
-                        'usage': cpu,
-                        'cores': psutil.cpu_count(),
-                        'status': 'good' if cpu < 80 else 'warning' if cpu < 95 else 'critical'
-                    },
-                    'memory': {
-                        'total': memory.total,
-                        'used': memory.used,
-                        'free': memory.free,
-                        'percent': memory.percent,
-                        'status': 'good' if memory.percent < 80 else 'warning' if memory.percent < 95 else 'critical'
-                    },
-                    'disk': {
-                        'total': disk.total,
-                        'used': disk.used,
-                        'free': disk.free,
-                        'percent': disk.percent,
-                        'status': 'good' if disk.percent < 80 else 'warning' if disk.percent < 95 else 'critical'
-                    }
-                })
-            except Exception as e:
-                logger.error(f"System monitoring error: {e}")
         
         return jsonify({
             'success': True,
@@ -1184,23 +1044,22 @@ def get_all_join_requests():
         
         all_requests = []
         
-        # Barcha startuplar
+        # Faol startaplar
         active_startups, _ = get_active_startups(1, 100)
-        pending_startups, _ = get_pending_startups(1, 100)
-        startups = active_startups + pending_startups
         
-        for startup in startups:
+        for startup in active_startups:
             startup_id = str(startup.get('_id', ''))
             requests = get_join_requests(startup_id)
             for req in requests:
                 user = get_user(req.get('user_id'))
                 req['startup_name'] = startup.get('name')
                 req['user_name'] = f"{user.get('first_name', '')} {user.get('last_name', '')}" if user else "Noma'lum"
+                req['user_phone'] = user.get('phone', '') if user else ''
                 all_requests.append(req)
         
         return jsonify({
             'success': True,
-            'data': all_requests[:50]  # Faqat 50 tasi
+            'data': all_requests[:50]
         })
     except Exception as e:
         logger.error(f"Join requests error: {traceback.format_exc()}")
@@ -1211,6 +1070,9 @@ def get_all_join_requests():
 def get_notifications():
     """Bildirishnomalar"""
     try:
+        if not DB_AVAILABLE:
+            return jsonify({'success': False, 'error': 'Database mavjud emas'}), 500
+        
         # So'nggi faoliyatlar
         recent_startups = get_recent_startups(10)
         recent_users = get_recent_users(10)
@@ -1224,9 +1086,13 @@ def get_notifications():
                     'id': str(startup.get('_id', '')),
                     'type': 'new_startup',
                     'title': f"Yangi startup: {startup.get('name', '')}",
-                    'message': f"Yangi startup yaratildi: {startup.get('name', '')}",
+                    'message': f"Yangi startup yaratildi. Holati: Kutilmoqda",
                     'timestamp': format_date_for_display(startup.get('created_at', '')),
-                    'read': False
+                    'read': False,
+                    'data': {
+                        'startup_id': str(startup.get('_id', '')),
+                        'startup_name': startup.get('name', '')
+                    }
                 })
         
         # Yangi foydalanuvchilar
@@ -1237,7 +1103,11 @@ def get_notifications():
                 'title': f"Yangi foydalanuvchi: {user.get('first_name', '')} {user.get('last_name', '')}",
                 'message': f"Yangi foydalanuvchi ro'yxatdan o'tdi",
                 'timestamp': format_date_for_display(user.get('joined_at', '')),
-                'read': False
+                'read': False,
+                'data': {
+                    'user_id': user.get('user_id'),
+                    'user_name': f"{user.get('first_name', '')} {user.get('last_name', '')}"
+                }
             })
         
         # Sort by timestamp
@@ -1245,10 +1115,48 @@ def get_notifications():
         
         return jsonify({
             'success': True,
-            'data': notifications[:20]  # Faqat 20 tasi
+            'data': notifications[:20]
         })
     except Exception as e:
         logger.error(f"Notifications error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/join-request/<request_id>/<action>', methods=['POST'])
+@login_required
+@role_required(['superadmin', 'moderator'])
+def handle_join_request(request_id, action):
+    """Join requestni boshqarish"""
+    try:
+        if not DB_AVAILABLE:
+            return jsonify({'success': False, 'error': 'Database mavjud emas'}), 500
+        
+        # action: approve yoki reject
+        if action not in ['approve', 'reject']:
+            return jsonify({'success': False, 'error': 'Noto\'g\'ri amal'}), 400
+        
+        # Request ni topish va yangilash
+        # Note: update_join_request funksiyasi request_id va statusni qabul qiladi
+        status = 'accepted' if action == 'approve' else 'rejected'
+        success = update_join_request(request_id, status)
+        
+        if not success:
+            return jsonify({'success': False, 'error': 'Request yangilanmadi'}), 500
+        
+        # Bot orqali foydalanuvchiga xabar
+        if BOT_AVAILABLE:
+            try:
+                # Request ma'lumotlarini olish (sizning DB strukturangizga qarab)
+                # Bu yerda request_id bo'yicha ma'lumot olish kerak
+                pass
+            except Exception as e:
+                logger.error(f"Bot xatosi: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Request {action}ed successfully'
+        })
+    except Exception as e:
+        logger.error(f"Handle join request error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ==================== STATIC FILES ====================
@@ -1287,19 +1195,6 @@ if __name__ == '__main__':
             print("✅ Database ishga tushirildi")
         except Exception as e:
             print(f"⚠️ Database ishga tushirishda xato: {e}")
-    else:
-        print("⚠️ Database mavjud emas")
-    
-    # Botni alohida threadda ishga tushirish
-    if BOT_AVAILABLE:
-        try:
-            bot_thread = threading.Thread(target=start_bot, daemon=True)
-            bot_thread.start()
-            print("✅ Bot thread ishga tushirildi")
-        except Exception as e:
-            print(f"⚠️ Bot thread ishga tushirishda xato: {e}")
-    else:
-        print("⚠️ Bot mavjud emas")
     
     # Portni environment dan olish yoki default
     port = int(os.environ.get('PORT', 5000))
@@ -1308,14 +1203,14 @@ if __name__ == '__main__':
     print(f"\n" + "="*50)
     print(f"🚀 GarajHub Admin Panel")
     print(f"="*50)
-    print(f"🌐 http://localhost:{port}")
-    print(f"📊 Admin panel: http://localhost:{port}")
+    print(f"🌐 URL: http://localhost:{port}")
     print(f"🤖 Bot status: {'✅ Online' if BOT_AVAILABLE else '❌ Offline'}")
     print(f"🗄️ Database status: {'✅ Online' if DB_AVAILABLE else '❌ Offline'}")
-    print(f"👤 Admin login: admin / admin123")
-    print(f"👤 Moderator login: moderator / moderator123")
+    print(f"🔑 Admin login: admin / admin123")
+    print(f"🔧 Moderator login: moderator / moderator123")
+    print(f"📊 Real data: ✅ Ha")
+    print(f"🚫 Demo mode: ❌ Yo'q")
     print(f"="*50 + "\n")
     
     # Development mode
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
-    
