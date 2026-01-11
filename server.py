@@ -10,7 +10,6 @@ import time
 from bson import ObjectId
 import traceback
 import sys
-from collections import defaultdict
 
 # Bot va Database importlarini aniq qilamiz
 sys.path.append('.')  # Joriy papkaga qo'shamiz
@@ -30,8 +29,7 @@ try:
         get_user_joined_startups, get_join_requests,
         check_database_connection,
         update_startup_post_id,
-        get_startup_member_count,
-        get_all_startups  # Barcha startaplarni olish uchun
+        get_startup_member_count
     )
     DB_AVAILABLE = True
     print("✅ Database moduli muvaffaqiyatli yuklandi")
@@ -55,7 +53,6 @@ except ImportError as e:
     def get_all_users(): return []
     def get_recent_users(*args): return []
     def get_pending_startups(*args): return [], 0
-    def get_all_startups(): return []
 
 # Bot import
 try:
@@ -151,20 +148,7 @@ def format_date_for_display(date_str):
         if not date_str:
             return ""
         
-        # Avval datetime ga o'tkazish
-        if isinstance(date_str, datetime):
-            dt = date_str
-        elif isinstance(date_str, str):
-            # Turli formatlarni tekshirish
-            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d']:
-                try:
-                    dt = datetime.strptime(date_str[:19], fmt)
-                    break
-                except:
-                    continue
-            else:
-                return date_str
-        
+        dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
         now = datetime.now()
         diff = now - dt
         
@@ -182,26 +166,7 @@ def format_date_for_display(date_str):
         else:
             return dt.strftime('%d.%m.%Y')
     except:
-        return str(date_str)
-
-def parse_date(date_str):
-    """String dan datetime ga o'tkazish"""
-    if not date_str:
-        return None
-    
-    try:
-        if isinstance(date_str, datetime):
-            return date_str
-        
-        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d']:
-            try:
-                return datetime.strptime(date_str[:19], fmt)
-            except:
-                continue
-        
-        return None
-    except:
-        return None
+        return date_str
 
 # ==================== ROUTES ====================
 
@@ -293,41 +258,8 @@ def get_statistics_data():
         recent_users = get_recent_users(1000)
         new_today = 0
         for user in recent_users:
-            joined_at = user.get('joined_at', '')
-            joined_date = parse_date(joined_at)
-            if joined_date and joined_date.strftime('%Y-%m-%d') == today:
+            if user.get('joined_at', '').startswith(today):
                 new_today += 1
-        
-        # Oxirgi 7 kundagi faol foydalanuvchilar
-        week_ago = datetime.now() - timedelta(days=7)
-        active_users = 0
-        for user in recent_users:
-            joined_at = user.get('joined_at', '')
-            joined_date = parse_date(joined_at)
-            if joined_date and joined_date >= week_ago:
-                active_users += 1
-        
-        # Kategoriyalar statistikasi
-        categories = get_all_categories()
-        category_stats = {}
-        if categories:
-            for category in categories:
-                startups_in_category = len(get_startups_by_category(category))
-                category_stats[category] = startups_in_category
-        
-        # Trend ma'lumotlari
-        yesterday = datetime.now() - timedelta(days=1)
-        yesterday_str = yesterday.strftime('%Y-%m-%d')
-        yesterday_users = 0
-        for user in recent_users:
-            joined_at = user.get('joined_at', '')
-            joined_date = parse_date(joined_at)
-            if joined_date and joined_date.strftime('%Y-%m-%d') == yesterday_str:
-                yesterday_users += 1
-        
-        user_trend = 0
-        if yesterday_users > 0:
-            user_trend = ((new_today - yesterday_users) / yesterday_users * 100)
         
         return jsonify({
             'success': True,
@@ -339,10 +271,10 @@ def get_statistics_data():
                 'completed_startups': stats.get('completed_startups', 0),
                 'rejected_startups': stats.get('rejected_startups', 0),
                 'new_today': new_today,
-                'active_users': active_users,
-                'categories': category_stats,
+                'active_users': len([u for u in recent_users if u.get('joined_at', '') >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')]),
+                'categories': {},
                 'trends': {
-                    'users': f"{user_trend:+.1f}%" if user_trend != 0 else "+0%",
+                    'users': "+0%",
                     'startups': "+0%"
                 }
             }
@@ -353,172 +285,6 @@ def get_statistics_data():
             'success': False,
             'error': str(e)
         }), 500
-
-@app.route('/api/analytics/user-growth')
-@login_required
-def get_user_growth():
-    """Foydalanuvchi o'sishi uchun analytics"""
-    try:
-        if not DB_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'Database mavjud emas'
-            }), 500
-        
-        period = request.args.get('period', 'month')
-        days = 30 if period == 'month' else 7 if period == 'week' else 365
-        
-        # Oxirgi N kun uchun ma'lumotlar
-        dates = []
-        new_users_data = []
-        total_users_data = []
-        
-        # Barcha foydalanuvchilarni olish
-        all_users = get_all_users()
-        
-        # Agar foydalanuvchilar bo'lmasa
-        if not all_users:
-            # Bo'sh ma'lumotlar qaytarish
-            for i in range(days - 1, -1, -1):
-                date = datetime.now() - timedelta(days=i)
-                dates.append(date.strftime('%d.%m'))
-                new_users_data.append(0)
-                total_users_data.append(0)
-        else:
-            # Har bir kun uchun hisoblash
-            for i in range(days - 1, -1, -1):
-                date = datetime.now() - timedelta(days=i)
-                date_str = date.strftime('%Y-%m-%d')
-                
-                # Shu kungi yangi foydalanuvchilar
-                new_users_today = 0
-                
-                # Bugungacha bo'lgan umumiy foydalanuvchilar
-                total_users_until_today = 0
-                
-                for user in all_users:
-                    joined_at = user.get('joined_at', '')
-                    joined_date = parse_date(joined_at)
-                    
-                    if joined_date:
-                        user_date_str = joined_date.strftime('%Y-%m-%d')
-                        
-                        # Agar bugun ro'yxatdan o'tgan bo'lsa
-                        if user_date_str == date_str:
-                            new_users_today += 1
-                        
-                        # Agar bugunga qadar ro'yxatdan o'tgan bo'lsa
-                        if joined_date <= date:
-                            total_users_until_today += 1
-                
-                # Faqat har 3-5 kun uchun label qo'yish
-                if i % max(1, days // 10) == 0 or i == days - 1 or i == 0:
-                    dates.append(date.strftime('%d.%m'))
-                else:
-                    dates.append('')
-                
-                new_users_data.append(new_users_today)
-                total_users_data.append(total_users_until_today)
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'labels': dates,
-                'datasets': [
-                    {
-                        'label': 'Yangi foydalanuvchilar',
-                        'data': new_users_data,
-                        'borderColor': '#4CAF50',
-                        'backgroundColor': 'rgba(76, 175, 80, 0.1)',
-                        'tension': 0.4,
-                        'fill': True
-                    },
-                    {
-                        'label': 'Jami foydalanuvchilar',
-                        'data': total_users_data,
-                        'borderColor': '#2196F3',
-                        'backgroundColor': 'transparent',
-                        'tension': 0.4
-                    }
-                ]
-            }
-        })
-    except Exception as e:
-        logger.error(f"Analytics error: {traceback.format_exc()}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/analytics/startup-distribution')
-@login_required
-def get_startup_distribution():
-    """Startap taqsimoti"""
-    try:
-        if not DB_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'Database mavjud emas'
-            }), 500
-        
-        # Barcha startaplarni olish
-        all_startups = get_all_startups()
-        
-        # Agar funksiya mavjud bo'lmasa, turli manbalardan yig'amiz
-        if not all_startups:
-            active_startups, _ = get_active_startups(1, 1000)
-            pending_startups, _ = get_pending_startups(1, 1000)
-            completed_startups, _ = get_completed_startups(1, 1000)
-            rejected_startups, _ = get_rejected_startups(1, 1000)
-            all_startups = active_startups + pending_startups + completed_startups + rejected_startups
-        
-        # Statuslar bo'yicha guruhlash
-        status_counts = defaultdict(int)
-        for startup in all_startups:
-            status = startup.get('status', 'unknown')
-            status_counts[status] += 1
-        
-        # Status nomlarini formatlash
-        status_labels = {
-            'active': 'Faol',
-            'pending': 'Kutilayotgan',
-            'completed': 'Yakunlangan',
-            'rejected': 'Rad etilgan',
-            'unknown': 'Noma\'lum'
-        }
-        
-        # Chart uchun ma'lumotlar
-        labels = []
-        data = []
-        background_colors = ['#4CAF50', '#FF9800', '#2196F3', '#F44336', '#9E9E9E']
-        
-        for status, count in status_counts.items():
-            label = status_labels.get(status, status)
-            labels.append(label)
-            data.append(count)
-        
-        # Agar ma'lumotlar bo'sh bo'lsa
-        if not data:
-            labels = ['Faol', 'Kutilayotgan', 'Yakunlangan', 'Rad etilgan']
-            data = [0, 0, 0, 0]
-            background_colors = ['#4CAF50', '#FF9800', '#2196F3', '#F44336']
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'labels': labels,
-                'datasets': [{
-                    'data': data,
-                    'backgroundColor': background_colors[:len(data)],
-                    'borderColor': '#ffffff',
-                    'borderWidth': 2
-                }]
-            },
-            'total': len(all_startups)
-        })
-    except Exception as e:
-        logger.error(f"Distribution error: {traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/users')
 @login_required
@@ -538,9 +304,6 @@ def get_users():
         # DB dan foydalanuvchilarni olish
         users = get_all_users()
         
-        # Sort by joined_at desc (agar joined_at bo'lsa)
-        users.sort(key=lambda x: parse_date(x.get('joined_at', '')) or datetime.min, reverse=True)
-        
         # Filtrlash
         if search:
             filtered_users = []
@@ -554,6 +317,9 @@ def get_users():
                 if search.lower() in user_text:
                     filtered_users.append(user)
             users = filtered_users
+        
+        # Sort by joined_at desc
+        users.sort(key=lambda x: x.get('joined_at', ''), reverse=True)
         
         # Pagination
         total = len(users)
@@ -722,7 +488,7 @@ def get_startups_list():
             all_startups = filtered
         
         # Sort by created_at desc
-        all_startups.sort(key=lambda x: parse_date(x.get('created_at', '')) or datetime.min, reverse=True)
+        all_startups.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         
         total = len(all_startups)
         
@@ -1369,11 +1135,21 @@ def handle_join_request(request_id, action):
             return jsonify({'success': False, 'error': 'Noto\'g\'ri amal'}), 400
         
         # Request ni topish va yangilash
+        # Note: update_join_request funksiyasi request_id va statusni qabul qiladi
         status = 'accepted' if action == 'approve' else 'rejected'
         success = update_join_request(request_id, status)
         
         if not success:
             return jsonify({'success': False, 'error': 'Request yangilanmadi'}), 500
+        
+        # Bot orqali foydalanuvchiga xabar
+        if BOT_AVAILABLE:
+            try:
+                # Request ma'lumotlarini olish (sizning DB strukturangizga qarab)
+                # Bu yerda request_id bo'yicha ma'lumot olish kerak
+                pass
+            except Exception as e:
+                logger.error(f"Bot xatosi: {e}")
         
         return jsonify({
             'success': True,
@@ -1430,9 +1206,10 @@ if __name__ == '__main__':
     print(f"🌐 URL: http://localhost:{port}")
     print(f"🤖 Bot status: {'✅ Online' if BOT_AVAILABLE else '❌ Offline'}")
     print(f"🗄️ Database status: {'✅ Online' if DB_AVAILABLE else '❌ Offline'}")
+    print(f"🔑 Admin login: admin / admin123")
+    print(f"🔧 Moderator login: moderator / moderator123")
     print(f"📊 Real data: ✅ Ha")
     print(f"🚫 Demo mode: ❌ Yo'q")
-    print(f"📈 Analytics: ✅ Foydalanuvchi o'sishi va startup taqsimoti")
     print(f"="*50 + "\n")
     
     # Development mode
