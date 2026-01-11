@@ -230,7 +230,7 @@ def ask_for_subscription(message):
     )
     bot.send_message(
         message.chat.id,
-       
+        "🤖 <b>GarajHub</b>\n\n"
         "Davom etish uchun rasmiy kanalimizga obuna bo'ling:\n"
         f"👉 {CHANNEL_USERNAME}",
         reply_markup=markup
@@ -295,7 +295,8 @@ def handle_contact(message):
         # Muvaffaqiyatli xabar
         bot.send_message(
             message.chat.id,
-            f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
+            f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n"
+            f"Menyudan foydalaning:",
             reply_markup=create_main_menu(user_id)
         )
 
@@ -313,7 +314,7 @@ def show_main_menu(message_or_call):
     user_id = message_or_call.from_user.id if isinstance(message_or_call, types.CallbackQuery) else message_or_call.from_user.id
     clear_user_state(user_id)
     
-    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!\n\</b>"
+    text = "🚀 <b>GarajHub</b> — startaplar platformasiga xush kelibsiz!\n\n➡️ <b>Asosiy menyu:</b>"
     
     bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
 
