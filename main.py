@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot tokenini environmentdan olish
-BOT_TOKEN = os.getenv('BOT_TOKEN', '8545746982:AAG9qmqDGgzlNwOO7Qqts4-6rPH9zJYwvUU')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8545746982:AAHbiWfPEAvmxQYHtz-G2gqtAsoDdunNOyI')
 CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', '@GarajHub_uz')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '7903688837'))
 
@@ -36,7 +36,7 @@ from db import (
     update_user_specialization, update_user_experience,
     update_startup_member_count, get_startup_member_count,
     update_startup_post_id, get_startup_by_post_id,
-    update_startup_current_members, get_active_startup_posts
+    update_startup_current_members
 )
 
 # Database initialization
@@ -45,6 +45,8 @@ init_db()
 # User state management
 user_states = {}
 category_data = {}  # Global dictionary for category data
+# Foydalanuvchi ma'lumotlarini saqlash
+user_data = {}
 
 def set_user_state(user_id: int, state: str):
     user_states[user_id] = state
@@ -289,14 +291,27 @@ def show_recommended_startups(message):
     set_user_state(user_id, 'viewing_recommended')
     show_recommended_page(message.chat.id, 1)
 
-def show_recommended_page(chat_id, page):
+def show_recommended_page(chat_id, page, message_id=None):
     per_page = 1
     startups, total = get_active_startups(page, per_page=per_page)
     
     if not startups:
-        bot.send_message(chat_id, 
-                        "📭 <b>Hozircha startup mavjud emas.</b>", 
-                        reply_markup=create_back_button(True))
+        if message_id:
+            try:
+                bot.edit_message_text(
+                    "📭 <b>Hozircha startup mavjud emas.</b>",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=create_back_button(True)
+                )
+            except:
+                bot.send_message(chat_id, 
+                                "📭 <b>Hozircha startup mavjud emas.</b>", 
+                                reply_markup=create_back_button(True))
+        else:
+            bot.send_message(chat_id, 
+                            "📭 <b>Hozircha startup mavjud emas.</b>", 
+                            reply_markup=create_back_button(True))
         return
     
     startup = startups[0]
@@ -355,23 +370,60 @@ def show_recommended_page(chat_id, page):
     markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_startups_menu'))
     
     try:
+        if message_id:
+            if startup.get('logo'):
+                try:
+                    bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=types.InputMediaPhoto(startup['logo'], caption=text),
+                        reply_markup=markup
+                    )
+                except:
+                    try:
+                        bot.edit_message_caption(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            caption=text,
+                            reply_markup=markup
+                        )
+                    except:
+                        try:
+                            bot.delete_message(chat_id, message_id)
+                        except:
+                            pass
+                        msg = bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                try:
+                    bot.edit_message_text(
+                        text=text,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        reply_markup=markup
+                    )
+                except:
+                    try:
+                        bot.delete_message(chat_id, message_id)
+                    except:
+                        pass
+                    bot.send_message(chat_id, text, reply_markup=markup)
+        else:
+            if startup.get('logo'):
+                bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                bot.send_message(chat_id, text, reply_markup=markup)
+    except Exception as e:
+        logging.error(f"Xabar yuborish/yangilashda xatolik: {e}")
         if startup.get('logo'):
             bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
         else:
             bot.send_message(chat_id, text, reply_markup=markup)
-    except Exception as e:
-        logging.error(f"Xabar yuborishda xatolik: {e}")
-        bot.send_message(chat_id, text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rec_page_'))
 def handle_recommended_page(call):
     try:
         page = int(call.data.split('_')[2])
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        show_recommended_page(call.message.chat.id, page)
+        show_recommended_page(call.message.chat.id, page, call.message.message_id)
         bot.answer_callback_query(call.id)
     except:
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
@@ -422,17 +474,13 @@ def show_categories(message):
 def handle_category_selection(call):
     try:
         category_name = call.data.split('_')[1]
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        show_category_startups(call.message.chat.id, category_name, 1)
+        show_category_startups(call.message.chat.id, category_name, 1, call.message.message_id)
         bot.answer_callback_query(call.id)
     except Exception as e:
         logging.error(f"Category selection error: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
-def show_category_startups(chat_id, category_name, page):
+def show_category_startups(chat_id, category_name, page, message_id=None):
     try:
         startups = get_startups_by_category(category_name)
         
@@ -440,9 +488,22 @@ def show_category_startups(chat_id, category_name, page):
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_categories'))
             
-            bot.send_message(chat_id, 
-                            f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
-                            reply_markup=markup)
+            if message_id:
+                try:
+                    bot.edit_message_text(
+                        f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        reply_markup=markup
+                    )
+                except:
+                    bot.send_message(chat_id, 
+                                    f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                                    reply_markup=markup)
+            else:
+                bot.send_message(chat_id, 
+                                f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                                reply_markup=markup)
             return
         
         per_page = 5
@@ -505,7 +566,22 @@ def show_category_startups(chat_id, category_name, page):
         
         markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_categories'))
         
-        bot.send_message(chat_id, text, reply_markup=markup)
+        if message_id:
+            try:
+                bot.edit_message_text(
+                    text=text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=markup
+                )
+            except:
+                try:
+                    bot.delete_message(chat_id, message_id)
+                except:
+                    pass
+                bot.send_message(chat_id, text, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup)
     except Exception as e:
         logging.error(f"Show category startups error: {e}")
         bot.send_message(chat_id, f"⚠️ Xatolik yuz berdi!", reply_markup=create_back_button(True))
@@ -516,12 +592,7 @@ def handle_category_page(call):
         parts = call.data.split('_')
         category_name = parts[2]
         page = int(parts[3])
-        
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        show_category_startups(call.message.chat.id, category_name, page)
+        show_category_startups(call.message.chat.id, category_name, page, call.message.message_id)
         bot.answer_callback_query(call.id)
     except Exception as e:
         logging.error(f"Category page error: {e}")
@@ -576,14 +647,39 @@ def handle_category_startup_view(call):
         markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_categories'))
         
         try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if startup.get('logo'):
+                try:
+                    bot.edit_message_media(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        media=types.InputMediaPhoto(startup['logo'], caption=text),
+                        reply_markup=markup
+                    )
+                except:
+                    try:
+                        bot.edit_message_caption(
+                            chat_id=call.message.chat.id,
+                            message_id=call.message.message_id,
+                            caption=text,
+                            reply_markup=markup
+                        )
+                    except:
+                        bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                try:
+                    bot.edit_message_text(
+                        text=text,
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        reply_markup=markup
+                    )
+                except:
+                    bot.send_message(call.message.chat.id, text, reply_markup=markup)
         except:
-            pass
-        
-        if startup.get('logo'):
-            bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
-        else:
-            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+            if startup.get('logo'):
+                bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                bot.send_message(call.message.chat.id, text, reply_markup=markup)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
@@ -756,6 +852,12 @@ def approve_join_request(call):
             pass
         bot.answer_callback_query(call.id, "✅ Tasdiqlandi!")
         
+        # Kanal postini yangilash
+        try:
+            update_channel_post(startup_id)
+        except:
+            pass
+        
     except Exception as e:
         logging.error(f"Approve join xatosi: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
@@ -879,30 +981,44 @@ def handle_edit_profile(call):
             InlineKeyboardButton('👩 Ayol', callback_data='gender_female'),
             InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_profile')
         )
-        bot.edit_message_text("⚧️ <b>Jinsingizni tanlang:</b>", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        try:
+            bot.edit_message_text(
+                "⚧️ <b>Jinsingizni tanlang:</b>",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(call.message.chat.id, "⚧️ <b>Jinsingizni tanlang:</b>", reply_markup=markup)
     
     elif call.data == 'edit_birth_date':
         set_user_state(user_id, 'editing_birth_date')
-        msg = bot.send_message(call.message.chat.id, 
-                              "🎂 <b>Tug'ilgan sanangizni kiriting (kun-oy-yil)</b>\n"
-                              "Masalan: <code>30-04-2000</code>", 
-                              reply_markup=create_back_button())
+        msg = bot.send_message(
+            call.message.chat.id, 
+            "🎂 <b>Tug'ilgan sanangizni kiriting (kun-oy-yil)</b>\n"
+            "Masalan: <code>30-04-2000</code>", 
+            reply_markup=create_back_button()
+        )
         bot.register_next_step_handler(msg, process_birth_date)
     
     elif call.data == 'edit_specialization':
         set_user_state(user_id, 'editing_specialization')
-        msg = bot.send_message(call.message.chat.id, 
-                              "🔧 <b>Mutaxassisligingizni kiriting:</b>\n\n"
-                              "Masalan: <code>Python, AI, ML</code>", 
-                              reply_markup=create_back_button())
+        msg = bot.send_message(
+            call.message.chat.id, 
+            "🔧 <b>Mutaxassisligingizni kiriting:</b>\n\n"
+            "Masalan: <code>Python, AI, ML</code>", 
+            reply_markup=create_back_button()
+        )
         bot.register_next_step_handler(msg, process_specialization)
     
     elif call.data == 'edit_experience':
         set_user_state(user_id, 'editing_experience')
-        msg = bot.send_message(call.message.chat.id, 
-                              "📈 <b>Tajribangizni kiriting:</b>\n\n"
-                              "Masalan: <code>5 yil</code>", 
-                              reply_markup=create_back_button())
+        msg = bot.send_message(
+            call.message.chat.id, 
+            "📈 <b>Tajribangizni kiriting:</b>\n\n"
+            "Masalan: <code>5 yil</code>", 
+            reply_markup=create_back_button()
+        )
         bot.register_next_step_handler(msg, process_experience)
     
     elif call.data == 'edit_bio':
@@ -944,11 +1060,12 @@ def process_gender(call):
     gender = 'Erkak' if call.data == 'gender_male' else 'Ayol'
     update_user_field(user_id, 'gender', gender)
     
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    bot.send_message(call.message.chat.id, "✅ <b>Jins muvaffaqiyatli saqlandi</b>")
-    
+    bot.answer_callback_query(call.id, "✅ Jins muvaffaqiyatli saqlandi")
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
     show_profile(call.message)
-    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_profile')
 def back_to_profile(call):
@@ -1369,7 +1486,7 @@ def show_my_startups_list(message):
     
     show_my_startups_page(message.chat.id, user_id, 1)
 
-def show_my_startups_page(chat_id, user_id, page):
+def show_my_startups_page(chat_id, user_id, page, message_id=None):
     startups = get_startups_by_owner(user_id)
     
     per_page = 5
@@ -1416,17 +1533,29 @@ def show_my_startups_page(chat_id, user_id, page):
     
     markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_my_startups'))
     
-    bot.send_message(chat_id, text, reply_markup=markup)
+    if message_id:
+        try:
+            bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=markup
+            )
+        except:
+            try:
+                bot.delete_message(chat_id, message_id)
+            except:
+                pass
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('my_startup_page_'))
 def handle_my_startup_page(call):
     try:
         page = int(call.data.split('_')[3])
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        show_my_startups_page(call.message.chat.id, call.from_user.id, page)
+        user_id = call.from_user.id
+        show_my_startups_page(call.message.chat.id, user_id, page, call.message.message_id)
         bot.answer_callback_query(call.id)
     except Exception as e:
         logging.error(f"My startup page error: {e}")
@@ -1444,13 +1573,13 @@ def handle_my_startup_number(call):
             return
         
         startup = startups[idx]
-        view_my_startup_details(call.message.chat.id, call.message.message_id, startup)
+        view_my_startup_details(call.message.chat.id, user_id, startup, call.message.message_id)
         bot.answer_callback_query(call.id)
     except Exception as e:
         logging.error(f"My startup number error: {e}")
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
-def view_my_startup_details(chat_id, message_id, startup):
+def view_my_startup_details(chat_id, user_id, startup, message_id=None):
     user = get_user(startup['owner_id'])
     owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
     
@@ -1503,15 +1632,46 @@ def view_my_startup_details(chat_id, message_id, startup):
     
     markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_my_startups_list'))
     
-    try:
-        bot.delete_message(chat_id, message_id)
-    except:
-        pass
-    
-    if startup.get('logo'):
-        bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+    if message_id:
+        try:
+            if startup.get('logo'):
+                try:
+                    bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=types.InputMediaPhoto(startup['logo'], caption=text),
+                        reply_markup=markup
+                    )
+                except:
+                    try:
+                        bot.edit_message_caption(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            caption=text,
+                            reply_markup=markup
+                        )
+                    except:
+                        bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                try:
+                    bot.edit_message_text(
+                        text=text,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        reply_markup=markup
+                    )
+                except:
+                    bot.send_message(chat_id, text, reply_markup=markup)
+        except:
+            if startup.get('logo'):
+                bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                bot.send_message(chat_id, text, reply_markup=markup)
     else:
-        bot.send_message(chat_id, text, reply_markup=markup)
+        if startup.get('logo'):
+            bot.send_photo(chat_id, startup['logo'], caption=text, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('view_members_'))
 def view_startup_members(call):
@@ -1522,11 +1682,6 @@ def view_startup_members(call):
         
         members, total = get_startup_members(startup_id, page)
         total_pages = max(1, (total + 4) // 5)
-        
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
         
         if not members:
             text = "👥 <b>A'zolar</b>\n\n📭 <b>Hozircha a'zolar yo'q.</b>"
@@ -1557,7 +1712,16 @@ def view_startup_members(call):
         
         markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data=f'back_to_my_startup_{startup_id}'))
         
-        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        try:
+            bot.edit_message_text(
+                text=text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        
         bot.answer_callback_query(call.id)
     except Exception as e:
         logging.error(f"View members xatosi: {e}")
@@ -1588,11 +1752,7 @@ def process_startup_results(message, startup_id):
         startups = get_startups_by_owner(user_id)
         for startup in startups:
             if startup['_id'] == startup_id:
-                try:
-                    bot.delete_message(message.chat.id, message.message_id)
-                except:
-                    pass
-                view_my_startup_details(message.chat.id, message.message_id, startup)
+                view_my_startup_details(message.chat.id, user_id, startup)
                 break
         return
     
@@ -1655,11 +1815,7 @@ def process_startup_photo(message, startup_id, results_text):
         startups = get_startups_by_owner(user_id)
         for startup in startups:
             if startup['_id'] == startup_id:
-                try:
-                    bot.delete_message(message.chat.id, message.message_id)
-                except:
-                    pass
-                view_my_startup_details(message.chat.id, message.message_id, startup)
+                view_my_startup_details(message.chat.id, user_id, startup)
                 break
     else:
         bot.send_message(message.chat.id, "⚠️ <b>Iltimos, rasm yuboring!</b>", reply_markup=create_back_button())
@@ -1888,14 +2044,25 @@ def admin_view_startup_details(call):
         markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='pending_startups_1'))
         
         try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if startup.get('logo'):
+                bot.edit_message_media(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    media=types.InputMediaPhoto(startup['logo'], caption=text),
+                    reply_markup=markup
+                )
+            else:
+                bot.edit_message_text(
+                    text=text,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=markup
+                )
         except:
-            pass
-        
-        if startup.get('logo'):
-            bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
-        else:
-            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+            if startup.get('logo'):
+                bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                bot.send_message(call.message.chat.id, text, reply_markup=markup)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
@@ -2147,11 +2314,15 @@ def handle_back_to_startups_menu(call):
     )
     
     try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.edit_message_text(
+            "🌐 <b>Startaplar bo'limi:</b>\n\nKerakli bo'limni tanlang:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
     except:
-        pass
+        bot.send_message(call.message.chat.id, "🌐 <b>Startaplar bo'limi:</b>\n\nKerakli bo'limni tanlang:", reply_markup=markup)
     
-    bot.send_message(call.message.chat.id, "🌐 <b>Startaplar bo'limi:</b>\n\nKerakli bo'limni tanlang:", reply_markup=markup)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_categories')
@@ -2218,17 +2389,21 @@ def handle_back_to_my_startups(call):
     )
     
     try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.edit_message_text(
+            "📌 <b>Startaplarim bo'limi:</b>\n\nKerakli bo'limni tanlang:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
     except:
-        pass
+        bot.send_message(call.message.chat.id, "📌 <b>Startaplarim bo'limi:</b>\n\nKerakli bo'limni tanlang:", reply_markup=markup)
     
-    bot.send_message(call.message.chat.id, "📌 <b>Startaplarim bo'limi:</b>\n\nKerakli bo'limni tanlang:", reply_markup=markup)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_my_startups_list')
 def handle_back_to_my_startups_list(call):
     user_id = call.from_user.id
-    show_my_startups_page(call.message.chat.id, user_id, 1)
+    show_my_startups_page(call.message.chat.id, user_id, 1, call.message.message_id)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('back_to_my_startup_'))
@@ -2241,7 +2416,7 @@ def handle_back_to_my_startup(call):
         # Startupni topish
         for idx, startup in enumerate(startups):
             if startup['_id'] == startup_id:
-                view_my_startup_details(call.message.chat.id, call.message.message_id, startup)
+                view_my_startup_details(call.message.chat.id, user_id, startup, call.message.message_id)
                 break
         
         bot.answer_callback_query(call.id)
@@ -2289,7 +2464,7 @@ def handle_back_button(message):
         startups = get_startups_by_owner(user_id)
         for startup in startups:
             if startup['_id'] == startup_id:
-                view_my_startup_details(message.chat.id, message.message_id, startup)
+                view_my_startup_details(message.chat.id, user_id, startup)
                 break
     
     elif user_state == 'in_my_startups':
