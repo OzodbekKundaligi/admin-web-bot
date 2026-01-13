@@ -5,7 +5,6 @@ from typing import Dict, List, Optional, Tuple
 import telebot
 import telebot.apihelper as apihelper
 import time
-import html
 
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -24,32 +23,56 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 # HTML belgilarni tozalash funksiyasi
 def escape_html(text):
-    """HTML belgilarini tozalash - faqat zarur belgilarni escape qilish"""
+    """HTML belgilarini tozalash - faqat xavfli belgilarni escape qilish"""
     if not text:
         return ""
     
     text = str(text)
     
-    # Faqat xavfli belgilarni escape qilish
-    # Lekin <b>, </b>, <i>, </i>, <code>, </code>, <pre>, </pre> larni saqlab qolish
-    # Bu Telegram HTML parse mode qoidalariga mos keladi
+    # Avval HTML teglarni maxsus belgilar bilan almashtiramiz
+    tag_replacements = [
+        ('<b>', '__B_OPEN__'),
+        ('</b>', '__B_CLOSE__'),
+        ('<i>', '__I_OPEN__'),
+        ('</i>', '__I_CLOSE__'),
+        ('<code>', '__CODE_OPEN__'),
+        ('</code>', '__CODE_CLOSE__'),
+        ('<pre>', '__PRE_OPEN__'),
+        ('</pre>', '__PRE_CLOSE__'),
+        ('<strong>', '__STRONG_OPEN__'),
+        ('</strong>', '__STRONG_CLOSE__'),
+        ('<em>', '__EM_OPEN__'),
+        ('</em>', '__EM_CLOSE__'),
+    ]
+    
+    for tag, replacement in tag_replacements:
+        text = text.replace(tag, replacement)
+    
+    # HTML belgilarni escape qilish
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
+    text = text.replace('"', '&quot;')
+    text = text.replace("'", '&#39;')
     
-    # Endi Telegramga mos HTML teglarini qaytarish
-    text = text.replace('&lt;b&gt;', '<b>')
-    text = text.replace('&lt;/b&gt;', '</b>')
-    text = text.replace('&lt;i&gt;', '<i>')
-    text = text.replace('&lt;/i&gt;', '</i>')
-    text = text.replace('&lt;code&gt;', '<code>')
-    text = text.replace('&lt;/code&gt;', '</code>')
-    text = text.replace('&lt;pre&gt;', '<pre>')
-    text = text.replace('&lt;/pre&gt;', '</pre>')
-    text = text.replace('&lt;strong&gt;', '<strong>')
-    text = text.replace('&lt;/strong&gt;', '</strong>')
-    text = text.replace('&lt;em&gt;', '<em>')
-    text = text.replace('&lt;/em&gt;', '</em>')
+    # Maxsus belgilarni asl HTML teglariga qaytarish
+    reverse_replacements = [
+        ('__B_OPEN__', '<b>'),
+        ('__B_CLOSE__', '</b>'),
+        ('__I_OPEN__', '<i>'),
+        ('__I_CLOSE__', '</i>'),
+        ('__CODE_OPEN__', '<code>'),
+        ('__CODE_CLOSE__', '</code>'),
+        ('__PRE_OPEN__', '<pre>'),
+        ('__PRE_CLOSE__', '</pre>'),
+        ('__STRONG_OPEN__', '<strong>'),
+        ('__STRONG_CLOSE__', '</strong>'),
+        ('__EM_OPEN__', '<em>'),
+        ('__EM_CLOSE__', '</em>'),
+    ]
+    
+    for replacement, tag in reverse_replacements:
+        text = text.replace(replacement, tag)
     
     return text
 
@@ -248,7 +271,7 @@ def handle_contact(message):
             
             bot.send_message(
                 message.chat.id,
-                f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
+                f"✅ <b>{escape_html(first_name)}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
                 reply_markup=create_main_menu(user_id)
             )
         elif state == 'waiting_phone_edit':
@@ -273,7 +296,7 @@ def send_welcome_back_message(message_or_call, first_name):
     
     bot.send_message(
         chat_id,
-        f"🎉 <b>Qaytganingiz bilan, {first_name}!</b>\n\n"
+        f"🎉 <b>Qaytganingiz bilan, {escape_html(first_name)}!</b>\n\n"
         f"🚀 <b>GarajHub</b> startaplar platformasiga xush kelibsiz!\n\n",
         reply_markup=create_main_menu(user_id)
     )
@@ -366,22 +389,15 @@ def show_recommended_page(chat_id, page, message_id=None):
             except:
                 pass
     
-    # HTML escape qilish
-    startup_name = escape_html(startup['name'])
-    owner_name = escape_html(owner_name)
-    category = escape_html(startup.get('category', '—'))
-    required_skills = escape_html(startup.get('required_skills', '—'))
-    description = escape_html(startup['description'])
-    
     text = (
         f"💡 <b>Tavsiya {page}/{total_pages}</b>\n\n"
-        f"🎯 <b>Nomi:</b> {startup_name}\n"
+        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
         f"📅 <b>Boshlangan sana:</b> {start_date}\n"
-        f"👤 <b>Muallif:</b> {owner_name}\n"
-        f"🏷️ <b>Kategoriya:</b> {category}\n"
-        f"🔧 <b>Kerakli mutaxassislar:</b> {required_skills}\n"
+        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+        f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
         f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-        f"📌 <b>Tavsif:</b> {description}"
+        f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
     )
     
     markup = InlineKeyboardMarkup()
@@ -528,18 +544,18 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
             if message_id:
                 try:
                     bot.edit_message_text(
-                        f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                        f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
                         chat_id=chat_id,
                         message_id=message_id,
                         reply_markup=markup
                     )
                 except:
                     bot.send_message(chat_id, 
-                                    f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                                    f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
                                     reply_markup=markup)
             else:
                 bot.send_message(chat_id, 
-                                f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
+                                f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
                                 reply_markup=markup)
             return
         
@@ -572,16 +588,12 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
             user = get_user(startup['owner_id'])
             owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
             
-            # HTML escape
-            startup_name = escape_html(startup['name'])
-            owner_name = escape_html(owner_name)
-            
             # A'zolar sonini olish
             current_members = get_startup_member_count(startup['_id'])
             max_members = startup.get('max_members', 10)
             
             status_emoji = '✅' if current_members < max_members else '❌'
-            text += f"{i}. <b>{startup_name}</b> – {owner_name} {status_emoji}\n"
+            text += f"{i}. <b>{escape_html(startup['name'])}</b> – {escape_html(owner_name)} {status_emoji}\n"
         
         markup = InlineKeyboardMarkup(row_width=5)
         
@@ -667,21 +679,14 @@ def handle_category_startup_view(call):
                 except:
                     pass
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        owner_name = escape_html(owner_name)
-        category = escape_html(startup.get('category', '—'))
-        required_skills = escape_html(startup.get('required_skills', '—'))
-        description = escape_html(startup['description'])
-        
         text = (
-            f"🎯 <b>Nomi:</b> {startup_name}\n"
+            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
             f"📅 <b>Boshlangan sana:</b> {start_date}\n"
-            f"👤 <b>Muallif:</b> {owner_name}\n"
-            f"🏷️ <b>Kategoriya:</b> {category}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b> {required_skills}\n"
+            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
             f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-            f"📌 <b>Tavsif:</b> {description}"
+            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
         )
         
         markup = InlineKeyboardMarkup()
@@ -859,7 +864,7 @@ def approve_join_request(call):
                 pass
             bot.answer_callback_query(call.id, "❌ A'zolar to'ldi!")
             
-            # Foydalanuvchiga xabar
+            # Foydalanuvchigaxabar
             try:
                 bot.send_message(
                     user_id,
@@ -967,26 +972,16 @@ def show_profile(message):
         save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
         user = get_user(user_id)
     
-    # HTML escape qilish
-    first_name = escape_html(user.get('first_name', '—'))
-    last_name = escape_html(user.get('last_name', '—'))
-    gender = escape_html(user.get('gender', '—'))
-    phone = user.get('phone', '—')
-    birth_date = escape_html(user.get('birth_date', '—'))
-    specialization = escape_html(user.get('specialization', '—'))
-    experience = escape_html(user.get('experience', '—'))
-    bio = escape_html(user.get('bio', '—'))
-    
     profile_text = (
         "👤 <b>Profil ma'lumotlari:</b>\n\n"
-        f"🧑 <b>Ism:</b> {first_name}\n"
-        f"🧾 <b>Familiya:</b> {last_name}\n"
-        f"⚧️ <b>Jins:</b> {gender}\n"
-        f"📞 <b>Telefon:</b> {phone}\n"
-        f"🎂 <b>Tug'ilgan sana:</b> {birth_date}\n"
-        f"🔧 <b>Mutaxassislik:</b> {specialization}\n"
-        f"📈 <b>Tajriba:</b> {experience}\n"
-        f"📝 <b>Bio:</b> {bio}\n\n"
+        f"🧑 <b>Ism:</b> {escape_html(user.get('first_name', '—'))}\n"
+        f"🧾 <b>Familiya:</b> {escape_html(user.get('last_name', '—'))}\n"
+        f"⚧️ <b>Jins:</b> {escape_html(user.get('gender', '—'))}\n"
+        f"📞 <b>Telefon:</b> {user.get('phone', '—')}\n"
+        f"🎂 <b>Tug'ilgan sana:</b> {escape_html(user.get('birth_date', '—'))}\n"
+        f"🔧 <b>Mutaxassislik:</b> {escape_html(user.get('specialization', '—'))}\n"
+        f"📈 <b>Tajriba:</b> {escape_html(user.get('experience', '—'))}\n"
+        f"📝 <b>Bio:</b> {escape_html(user.get('bio', '—'))}\n\n"
         "🛠 <b>Tahrirlash uchun tugmalardan birini tanlang:</b>"
     )
     
@@ -1094,7 +1089,6 @@ def process_first_name(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     first_name = escape_html(message.text)
     update_user_field(user_id, 'first_name', first_name)
     bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli saqlandi</b>")
@@ -1109,7 +1103,6 @@ def process_last_name(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     last_name = escape_html(message.text)
     update_user_field(user_id, 'last_name', last_name)
     bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>")
@@ -1142,7 +1135,6 @@ def process_birth_date(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     birth_date = escape_html(message.text)
     update_user_field(user_id, 'birth_date', birth_date)
     bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sana muvaffaqiyatli saqlandi</b>")
@@ -1157,7 +1149,6 @@ def process_specialization(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     specialization = escape_html(message.text)
     update_user_specialization(user_id, specialization)
     bot.send_message(message.chat.id, "✅ <b>Mutaxassislik muvaffaqiyatli saqlandi</b>")
@@ -1172,7 +1163,6 @@ def process_experience(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     experience = escape_html(message.text)
     update_user_experience(user_id, experience)
     bot.send_message(message.chat.id, "✅ <b>Tajriba muvaffaqiyatli saqlandi</b>")
@@ -1187,7 +1177,6 @@ def process_bio(message):
         show_profile(message)
         return
     
-    # HTML escape qilish
     bio = escape_html(message.text)
     update_user_field(user_id, 'bio', bio)
     bot.send_message(message.chat.id, "✅ <b>Bio saqlandi</b>")
@@ -1231,7 +1220,6 @@ def process_startup_name(message):
         bot.register_next_step_handler(msg, process_startup_name)
         return
     
-    # HTML escape qilish
     startup_name = escape_html(message.text.strip())
     
     # Global category_data ga saqlaymiz
@@ -1258,7 +1246,6 @@ def process_startup_description(message):
         bot.register_next_step_handler(msg, process_startup_description)
         return
     
-    # HTML escape qilish
     description = escape_html(message.text.strip())
     
     global category_data
@@ -1423,7 +1410,6 @@ def process_startup_skills(message):
     if user_id not in category_data:
         category_data[user_id] = {}
     
-    # HTML escape qilish
     skills = escape_html(message.text.strip())
     category_data[user_id]['required_skills'] = skills
     
@@ -1508,21 +1494,14 @@ def process_startup_max_members(message):
     user = get_user(data['owner_id'])
     owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
     
-    # HTML escape
-    startup_name = escape_html(startup['name'])
-    description = escape_html(startup['description'])
-    category = escape_html(startup.get('category', '—'))
-    required_skills = escape_html(startup.get('required_skills', '—'))
-    owner_name = escape_html(owner_name)
-    
     text = (
         f"🆕 <b>Yangi startup yaratildi!</b>\n\n"
-        f"🎯 <b>Nomi:</b> {startup_name}\n"
-        f"📌 <b>Tavsif:</b> {description[:200]}...\n"
-        f"🏷️ <b>Kategoriya:</b> {category}\n"
-        f"🔧 <b>Kerak:</b> {required_skills}\n"
+        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+        f"📌 <b>Tavsif:</b> {escape_html(startup['description'][:200])}...\n"
+        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+        f"🔧 <b>Kerak:</b> {escape_html(startup.get('required_skills', '—'))}\n"
         f"👥 <b>Maksimal a'zolar:</b> {startup.get('max_members', '—')}\n\n"
-        f"👤 <b>Muallif:</b> {owner_name}\n"
+        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
         f"📱 <b>Aloqa:</b> @{user.get('username', '—')}"
     )
     
@@ -1593,9 +1572,7 @@ def show_my_startups_page(chat_id, user_id, page, message_id=None):
             'rejected': '❌'
         }.get(startup['status'], '❓')
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        text += f"{i}. {startup_name} – {status_emoji}\n"
+        text += f"{i}. {escape_html(startup['name'])} – {status_emoji}\n"
     
     markup = InlineKeyboardMarkup(row_width=5)
     
@@ -1694,20 +1671,14 @@ def view_my_startup_details(chat_id, user_id, startup, message_id=None):
             except:
                 pass
     
-    # HTML escape
-    startup_name = escape_html(startup['name'])
-    owner_name = escape_html(owner_name)
-    category = escape_html(startup.get('category', '—'))
-    description = escape_html(startup['description'])
-    
     text = (
-        f"🎯 <b>Nomi:</b> {startup_name}\n"
+        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
         f"📊 <b>Holati:</b> {status_text}\n"
         f"📅 <b>Boshlanish sanasi:</b> {start_date}\n"
-        f"👤 <b>Muallif:</b> {owner_name}\n"
-        f"🏷️ <b>Kategoriya:</b> {category}\n"
+        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
         f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-        f"📌 <b>Tavsif:</b> {description}"
+        f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
     )
     
     markup = InlineKeyboardMarkup()
@@ -1787,13 +1758,11 @@ def view_startup_members(call):
                 if not member_name:
                     member_name = f"User {member.get('user_id', '')}"
                 
-                # HTML escape
-                member_name = escape_html(member_name)
                 bio_short = escape_html(member.get('bio', ''))
                 if bio_short and len(bio_short) > 30:
                     bio_short = bio_short[:30] + '...'
                 
-                text += f"{i}. <b>{member_name}</b>\n"
+                text += f"{i}. <b>{escape_html(member_name)}</b>\n"
                 if member.get('phone'):
                     text += f"   📱 {member.get('phone')}\n"
                 if bio_short:
@@ -1856,7 +1825,6 @@ def process_startup_results(message, startup_id):
                 break
         return
     
-    # HTML escape qilish
     results_text = escape_html(message.text)
     
     msg = bot.send_message(message.chat.id, 
@@ -1890,9 +1858,6 @@ def process_startup_photo(message, startup_id, results_text):
         end_date = datetime.now().strftime('%d-%m-%Y')
         success_count = 0
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        
         for member_id in members:
             try:
                 bot.send_photo(
@@ -1900,7 +1865,7 @@ def process_startup_photo(message, startup_id, results_text):
                     photo_id,
                     caption=(
                         f"🏁 <b>Startup yakunlandi</b>\n\n"
-                        f"🎯 <b>{startup_name}</b>\n"
+                        f"🎯 <b>{escape_html(startup['name'])}</b>\n"
                         f"📅 <b>Yakunlangan sana:</b> {end_date}\n"
                         f"📝 <b>Natijalar:</b> {results_text}"
                     )
@@ -1950,9 +1915,7 @@ def show_joined_startups(message):
             'rejected': '❌'
         }.get(startup['status'], '❓')
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        text += f"{i}. {startup_name} – {status_emoji}\n"
+        text += f"{i}. {escape_html(startup['name'])} – {status_emoji}\n"
     
     bot.send_message(message.chat.id, text, reply_markup=create_back_button(True))
 
@@ -2005,8 +1968,10 @@ def admin_dashboard(message):
         dashboard_text += f"👥 <b>So'nggi foydalanuvchilar:</b>\n"
         for i, user in enumerate(recent_users, 1):
             name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-            name = escape_html(name)
-            dashboard_text += f"{i}. {name}\n"
+            if not name:
+                name = "Noma'lum"
+            
+            dashboard_text += f"{i}. <b>{escape_html(name)}</b>\n"
         dashboard_text += "\n"
     
     if recent_startups:
@@ -2019,9 +1984,7 @@ def admin_dashboard(message):
                 'rejected': '❌'
             }.get(startup['status'], '❓')
             
-            # HTML escape
-            startup_name = escape_html(startup['name'])
-            dashboard_text += f"{i}. {startup_name} {status_emoji}\n"
+            dashboard_text += f"{i}. {escape_html(startup['name'])} {status_emoji}\n"
     
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -2077,10 +2040,7 @@ def show_pending_startups(call):
             user = get_user(startup['owner_id'])
             owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
             
-            # HTML escape
-            startup_name = escape_html(startup['name'])
-            owner_name = escape_html(owner_name)
-            text += f"{i}. <b>{startup_name}</b> – {owner_name}\n\n"
+            text += f"{i}. <b>{escape_html(startup['name'])}</b> – {escape_html(owner_name)}\n\n"
         
         markup = InlineKeyboardMarkup()
         
@@ -2099,7 +2059,6 @@ def show_pending_startups(call):
         
         # Startup tanlash
         for i, startup in enumerate(startups):
-            # HTML escape
             startup_name_short = escape_html(startup['name'][:20]) + '...' if len(startup['name']) > 20 else escape_html(startup['name'])
             markup.add(InlineKeyboardButton(f'{i+1}. {startup_name_short}', 
                                            callback_data=f'admin_view_startup_{startup["_id"]}'))
@@ -2131,24 +2090,16 @@ def admin_view_startup_details(call):
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         owner_contact = f"@{user.get('username', '')}" if user and user.get('username') else f"ID: {startup['owner_id']}"
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        description = escape_html(startup['description'])
-        owner_name = escape_html(owner_name)
-        category = escape_html(startup.get('category', '—'))
-        required_skills = escape_html(startup.get('required_skills', '—'))
-        group_link = escape_html(startup['group_link'])
-        
         text = (
             f"🖼 <b>Startup ma'lumotlari</b>\n\n"
-            f"🎯 <b>Nomi:</b> {startup_name}\n"
-            f"📌 <b>Tavsif:</b> {description}\n\n"
-            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}\n\n"
+            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
             f"📱 <b>Aloqa:</b> {owner_contact}\n"
-            f"🏷️ <b>Kategoriya:</b> {category}\n"
-            f"🔧 <b>Kerak:</b> {required_skills}\n"
+            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+            f"🔧 <b>Kerak:</b> {escape_html(startup.get('required_skills', '—'))}\n"
             f"👥 <b>Maksimal a'zolar:</b> {startup.get('max_members', '—')}\n"
-            f"🔗 <b>Guruh havolasi:</b> {group_link}\n"
+            f"🔗 <b>Guruh havolasi:</b> {escape_html(startup['group_link'])}\n"
             f"📅 <b>Yaratilgan sana:</b> {startup['created_at'][:10] if startup.get('created_at') else '—'}\n"
             f"📊 <b>Holati:</b> {startup['status']}"
         )
@@ -2214,12 +2165,10 @@ def admin_approve_startup(call):
         
         # Egaga xabar
         try:
-            # HTML escape
-            startup_name = escape_html(startup['name'])
             bot.send_message(
                 startup['owner_id'],
                 f"🎉 <b>Tabriklaymiz!</b>\n\n"
-                f"✅ '<b>{startup_name}</b>' startupingiz tasdiqlandi va kanalga joylandi!"
+                f"✅ '<b>{escape_html(startup['name'])}</b>' startupingiz tasdiqlandi va kanalga joylandi!"
             )
         except:
             pass
@@ -2228,19 +2177,12 @@ def admin_approve_startup(call):
         user = get_user(startup['owner_id'])
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        description = escape_html(startup['description'])
-        owner_name = escape_html(owner_name)
-        category = escape_html(startup.get('category', '—'))
-        required_skills = escape_html(startup.get('required_skills', '—'))
-        
         channel_text = (
-            f"🚀 <b>{startup_name}</b>\n\n"
-            f"📝 {description}\n\n"
-            f"👤 <b>Muallif:</b> {owner_name}\n"
-            f"🏷️ <b>Kategoriya:</b> {category}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b>\n{required_skills}\n\n"
+            f"🚀 <b>{escape_html(startup['name'])}</b>\n\n"
+            f"📝 {escape_html(startup['description'])}\n\n"
+            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b>\n{escape_html(startup.get('required_skills', '—'))}\n\n"
             f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
             f"➕ <b>O'z startupingizni yaratish uchun:</b> @{bot.get_me().username}"
         )
@@ -2283,12 +2225,10 @@ def admin_reject_startup(call):
         startup = get_startup(startup_id)
         if startup:
             try:
-                # HTML escape
-                startup_name = escape_html(startup['name'])
                 bot.send_message(
                     startup['owner_id'],
                     f"❌ <b>Xabar!</b>\n\n"
-                    f"Sizning '<b>{startup_name}</b>' startupingiz rad etildi."
+                    f"Sizning '<b>{escape_html(startup['name'])}</b>' startupingiz rad etildi."
                 )
             except:
                 pass
@@ -2326,10 +2266,7 @@ def admin_users(message):
         if not name:
             name = "Noma'lum"
         
-        # HTML escape
-        name = escape_html(name)
-        
-        text += f"{i}. <b>{name}</b>\n"
+        text += f"{i}. <b>{escape_html(name)}</b>\n"
         text += f"   👤 @{user.get('username', '—')} | 📅 {joined_date}\n\n"
     
     markup = InlineKeyboardMarkup()
@@ -2360,7 +2297,6 @@ def process_broadcast_message(message):
         admin_panel(message)
         return
     
-    # HTML escape qilish
     text = escape_html(message.text)
     users = get_all_users()
     
@@ -2674,20 +2610,13 @@ def update_channel_post(startup_id: str):
         user = get_user(startup['owner_id'])
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         
-        # HTML escape
-        startup_name = escape_html(startup['name'])
-        description = escape_html(startup['description'])
-        owner_name = escape_html(owner_name)
-        category = escape_html(startup.get('category', '—'))
-        required_skills = escape_html(startup.get('required_skills', '—'))
-        
         # Post matni
         channel_text = (
-            f"🚀 <b>{startup_name}</b>\n\n"
-            f"📝 {description}\n\n"
-            f"👤 <b>Muallif:</b> {owner_name}\n"
-            f"🏷️ <b>Kategoriya:</b> {category}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b>\n{required_skills}\n\n"
+            f"🚀 <b>{escape_html(startup['name'])}</b>\n\n"
+            f"📝 {escape_html(startup['description'])}\n\n"
+            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b>\n{escape_html(startup.get('required_skills', '—'))}\n\n"
             f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n\n"
         )
         
