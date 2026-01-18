@@ -23,56 +23,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 # HTML belgilarni tozalash funksiyasi
 def escape_html(text):
-    """HTML belgilarini tozalash - faqat xavfli belgilarni escape qilish"""
+    """HTML belgilarini tozalash - Telegram HTML formatida ishlash uchun"""
     if not text:
         return ""
     
     text = str(text)
     
-    # Avval HTML teglarni maxsus belgilar bilan almashtiramiz
-    tag_replacements = [
-        ('<b>', '__B_OPEN__'),
-        ('</b>', '__B_CLOSE__'),
-        ('<i>', '__I_OPEN__'),
-        ('</i>', '__I_CLOSE__'),
-        ('<code>', '__CODE_OPEN__'),
-        ('</code>', '__CODE_CLOSE__'),
-        ('<pre>', '__PRE_OPEN__'),
-        ('</pre>', '__PRE_CLOSE__'),
-        ('<strong>', '__STRONG_OPEN__'),
-        ('</strong>', '__STRONG_CLOSE__'),
-        ('<em>', '__EM_OPEN__'),
-        ('</em>', '__EM_CLOSE__'),
-    ]
-    
-    for tag, replacement in tag_replacements:
-        text = text.replace(tag, replacement)
-    
-    # HTML belgilarni escape qilish
+    # Faqat xavfli HTML belgilarni escape qilish
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
-    text = text.replace('"', '&quot;')
-    text = text.replace("'", '&#39;')
-    
-    # Maxsus belgilarni asl HTML teglariga qaytarish
-    reverse_replacements = [
-        ('__B_OPEN__', '<b>'),
-        ('__B_CLOSE__', '</b>'),
-        ('__I_OPEN__', '<i>'),
-        ('__I_CLOSE__', '</i>'),
-        ('__CODE_OPEN__', '<code>'),
-        ('__CODE_CLOSE__', '</code>'),
-        ('__PRE_OPEN__', '<pre>'),
-        ('__PRE_CLOSE__', '</pre>'),
-        ('__STRONG_OPEN__', '<strong>'),
-        ('__STRONG_CLOSE__', '</strong>'),
-        ('__EM_OPEN__', '<em>'),
-        ('__EM_CLOSE__', '</em>'),
-    ]
-    
-    for replacement, tag in reverse_replacements:
-        text = text.replace(replacement, tag)
     
     return text
 
@@ -408,14 +368,13 @@ def show_recommended_page(chat_id, page, message_id=None):
     else:
         markup.add(InlineKeyboardButton('🤝 Qo\'shilish', callback_data=f'join_startup_{startup["_id"]}'))
     
+    # Navigatsiya tugmalari - faqat o'ng/Chap tugmalar
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton('◀️', callback_data=f'rec_page_{page-1}'))
-    
-    nav_buttons.append(InlineKeyboardButton(f'{page}/{total_pages}', callback_data='current_page'))
+        nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'rec_page_{page-1}'))
     
     if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton('▶️', callback_data=f'rec_page_{page+1}'))
+        nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'rec_page_{page+1}'))
     
     if nav_buttons:
         markup.row(*nav_buttons)
@@ -582,7 +541,7 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
         }
         emoji = category_emojis.get(category_name, '🏷️')
         
-        text = f"{emoji} <b>{escape_html(category_name)} startaplari</b>\n📄 <b>Sahifa:</b> {page}/{total_pages}\n\n"
+        text = f"{emoji} <b>{escape_html(category_name)} startaplari</b>\n\n"
         
         for i, startup in enumerate(page_startups, start=start_idx+1):
             user = get_user(startup['owner_id'])
@@ -607,12 +566,12 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
         if numbers:
             markup.row(*numbers)
         
-        # Navigatsiya
+        # Navigatsiya - faqat o'ng/Chap tugmalar
         nav_buttons = []
         if page > 1:
-            nav_buttons.append(InlineKeyboardButton('◀️', callback_data=f'cat_page_{category_name}_{page-1}'))
+            nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'cat_page_{category_name}_{page-1}'))
         if page < total_pages:
-            nav_buttons.append(InlineKeyboardButton('▶️', callback_data=f'cat_page_{category_name}_{page+1}'))
+            nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'cat_page_{category_name}_{page+1}'))
         
         if nav_buttons:
             markup.row(*nav_buttons)
@@ -864,7 +823,7 @@ def approve_join_request(call):
                 pass
             bot.answer_callback_query(call.id, "❌ A'zolar to'ldi!")
             
-            # Foydalanuvchigaxabar
+            # Foydalanuvchiga xabar
             try:
                 bot.send_message(
                     user_id,
@@ -1220,7 +1179,7 @@ def process_startup_name(message):
         bot.register_next_step_handler(msg, process_startup_name)
         return
     
-    startup_name = escape_html(message.text.strip())
+    startup_name = message.text.strip()
     
     # Global category_data ga saqlaymiz
     global category_data
@@ -1246,7 +1205,7 @@ def process_startup_description(message):
         bot.register_next_step_handler(msg, process_startup_description)
         return
     
-    description = escape_html(message.text.strip())
+    description = message.text.strip()
     
     global category_data
     if user_id in category_data:
@@ -1410,7 +1369,7 @@ def process_startup_skills(message):
     if user_id not in category_data:
         category_data[user_id] = {}
     
-    skills = escape_html(message.text.strip())
+    skills = message.text.strip()
     category_data[user_id]['required_skills'] = skills
     
     msg = bot.send_message(message.chat.id,
@@ -1462,14 +1421,14 @@ def process_startup_max_members(message):
             show_main_menu(message)
             return
     
-    # Startup yaratish
+    # Startup yaratish (escape qilish shu yerda)
     startup_id = create_startup(
-        name=data['name'],
-        description=data['description'],
+        name=escape_html(data['name']),
+        description=escape_html(data['description']),
         logo=data.get('logo'),
         group_link=data['group_link'],
         owner_id=data['owner_id'],
-        required_skills=data.get('required_skills', ''),
+        required_skills=escape_html(data.get('required_skills', '')),
         category=data.get('category', 'Boshqa'),
         max_members=data['max_members']
     )
@@ -1562,7 +1521,7 @@ def show_my_startups_page(chat_id, user_id, page, message_id=None):
     end_idx = min(start_idx + per_page, total)
     page_startups = startups[start_idx:end_idx]
     
-    text = f"📋 <b>Mening startaplarim</b>\n📄 <b>Sahifa:</b> {page}/{total_pages}\n\n"
+    text = f"📋 <b>Mening startaplarim</b>\n\n"
     
     for i, startup in enumerate(page_startups, start=start_idx + 1):
         status_emoji = {
@@ -1586,12 +1545,12 @@ def show_my_startups_page(chat_id, user_id, page, message_id=None):
     if buttons:
         markup.row(*buttons)
     
-    # Navigatsiya
+    # Navigatsiya - faqat o'ng/Chap tugmalar
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton('◀️', callback_data=f'my_startup_page_{page-1}'))
+        nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'my_startup_page_{page-1}'))
     if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton('▶️', callback_data=f'my_startup_page_{page+1}'))
+        nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'my_startup_page_{page+1}'))
     
     if nav_buttons:
         markup.row(*nav_buttons)
@@ -1752,7 +1711,7 @@ def view_startup_members(call):
             text = "👥 <b>A'zolar</b>\n\n📭 <b>Hozircha a'zolar yo'q.</b>"
             markup = InlineKeyboardMarkup()
         else:
-            text = f"👥 <b>A'zolar</b>\n📄 <b>Sahifa:</b> {page}/{total_pages}\n\n"
+            text = f"👥 <b>A'zolar</b>\n\n"
             for i, member in enumerate(members, start=(page-1)*5+1):
                 member_name = f"{member.get('first_name', '')} {member.get('last_name', '')}".strip()
                 if not member_name:
@@ -1770,11 +1729,13 @@ def view_startup_members(call):
                 text += "\n"
         
         markup = InlineKeyboardMarkup()
+        
+        # Navigatsiya - faqat o'ng/Chap tugmalar
         nav_buttons = []
         if page > 1:
-            nav_buttons.append(InlineKeyboardButton('◀️', callback_data=f'view_members_{startup_id}_{page-1}'))
+            nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'view_members_{startup_id}_{page-1}'))
         if page < total_pages:
-            nav_buttons.append(InlineKeyboardButton('▶️', callback_data=f'view_members_{startup_id}_{page+1}'))
+            nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'view_members_{startup_id}_{page+1}'))
         
         if nav_buttons:
             markup.row(*nav_buttons)
@@ -1891,6 +1852,7 @@ def process_startup_photo(message, startup_id, results_text):
         msg = bot.send_message(message.chat.id, "🖼 <b>Natijalar rasmini yuboring:</b>", reply_markup=create_back_button())
         bot.register_next_step_handler(msg, process_startup_photo, startup_id, results_text)
 
+# 🤝 QO'SHILGAN STARTAPLAR - YAXSHILANGAN VERSIYA
 @bot.message_handler(func=lambda message: message.text == '🤝 Qo\'shilgan startaplar' and get_user_state(message.from_user.id) == 'in_my_startups')
 def show_joined_startups(message):
     user_id = message.from_user.id
@@ -1905,9 +1867,23 @@ def show_joined_startups(message):
     
     startups = get_startups_by_ids(joined_startup_ids)
     
-    text = "🤝 <b>Qo'shilgan startaplar:</b>\n\n"
+    # Sahifalangan ko'rinishda chiqaramiz
+    show_joined_startups_page(message.chat.id, user_id, startups, 1)
+
+def show_joined_startups_page(chat_id, user_id, startups, page, message_id=None):
+    """Qo'shilgan startaplarni sahifalangan ko'rinishda ko'rsatish"""
+    per_page = 5
+    total = len(startups)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(max(1, page), total_pages)
     
-    for i, startup in enumerate(startups, 1):
+    start_idx = (page - 1) * per_page
+    end_idx = min(start_idx + per_page, total)
+    page_startups = startups[start_idx:end_idx]
+    
+    text = f"🤝 <b>Qo'shilgan startaplar</b>\n\n"
+    
+    for i, startup in enumerate(page_startups, start=start_idx + 1):
         status_emoji = {
             'pending': '⏳',
             'active': '▶️',
@@ -1915,9 +1891,168 @@ def show_joined_startups(message):
             'rejected': '❌'
         }.get(startup['status'], '❓')
         
-        text += f"{i}. {escape_html(startup['name'])} – {status_emoji}\n"
+        # A'zolar sonini olish
+        current_members = get_startup_member_count(startup['_id'])
+        max_members = startup.get('max_members', 10)
+        
+        text += f"{i}. <b>{escape_html(startup['name'])}</b> {status_emoji}\n"
+        text += f"   👥 {current_members}/{max_members} | 🏷️ {escape_html(startup.get('category', '—'))}\n\n"
     
-    bot.send_message(message.chat.id, text, reply_markup=create_back_button(True))
+    markup = InlineKeyboardMarkup(row_width=5)
+    
+    # Raqamli tugmalar (1️⃣, 2️⃣, 3️⃣...)
+    numbers = []
+    for i in range(start_idx + 1, start_idx + len(page_startups) + 1):
+        startup_idx = i - 1
+        if startup_idx < len(startups):
+            numbers.append(InlineKeyboardButton(f'{i}️⃣', callback_data=f'joined_startup_{startups[startup_idx]["_id"]}'))
+    
+    if numbers:
+        markup.row(*numbers)
+    
+    # Navigatsiya tugmalari - faqat o'ng/Chap
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'joined_page_{page-1}'))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'joined_page_{page+1}'))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+    
+    markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_my_startups'))
+    
+    if message_id:
+        try:
+            bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=markup
+            )
+        except:
+            try:
+                bot.delete_message(chat_id, message_id)
+            except:
+                pass
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('joined_page_'))
+def handle_joined_page(call):
+    """Qo'shilgan startaplar sahifasini o'zgartirish"""
+    try:
+        page = int(call.data.split('_')[2])
+        user_id = call.from_user.id
+        joined_startup_ids = get_user_joined_startups(user_id)
+        
+        if not joined_startup_ids:
+            bot.answer_callback_query(call.id, "❌ Startaplar topilmadi!", show_alert=True)
+            return
+        
+        startups = get_startups_by_ids(joined_startup_ids)
+        show_joined_startups_page(call.message.chat.id, user_id, startups, page, call.message.message_id)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Joined page error: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('joined_startup_'))
+def handle_joined_startup_view(call):
+    """Qo'shilgan startup tafsilotlarini ko'rsatish"""
+    try:
+        startup_id = call.data.split('_')[2]
+        startup = get_startup(startup_id)
+        
+        if not startup:
+            bot.answer_callback_query(call.id, "❌ Startup topilmadi!", show_alert=True)
+            return
+        
+        user_id = call.from_user.id
+        
+        # Startup muallifini olish
+        user = get_user(startup['owner_id'])
+        owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
+        
+        # A'zolar sonini olish
+        current_members = get_startup_member_count(startup_id)
+        max_members = startup.get('max_members', 10)
+        
+        # Sanani formatlash
+        start_date = startup.get('started_at', '—')
+        if start_date and start_date != '—':
+            if isinstance(start_date, datetime):
+                start_date = start_date.strftime('%d-%m-%Y')
+            else:
+                try:
+                    start_date = datetime.fromisoformat(str(start_date)).strftime('%d-%m-%Y')
+                except:
+                    pass
+        
+        text = (
+            f"🤝 <b>Qo'shilgan startup:</b>\n\n"
+            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+            f"📅 <b>Boshlangan sana:</b> {start_date}\n"
+            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+            f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
+            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}\n"
+            f"🔗 <b>Guruh havolasi:</b> {escape_html(startup.get('group_link', '—'))}"
+        )
+        
+        markup = InlineKeyboardMarkup()
+        
+        # Guruhga kirish tugmasi
+        if startup.get('group_link'):
+            markup.add(InlineKeyboardButton('📲 Guruhga kirish', url=startup['group_link']))
+        
+        markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_joined_list'))
+        
+        try:
+            if startup.get('logo'):
+                bot.edit_message_media(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    media=types.InputMediaPhoto(startup['logo'], caption=text),
+                    reply_markup=markup
+                )
+            else:
+                bot.edit_message_text(
+                    text=text,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=markup
+                )
+        except:
+            if startup.get('logo'):
+                bot.send_photo(call.message.chat.id, startup['logo'], caption=text, reply_markup=markup)
+            else:
+                bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Joined startup view error: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_joined_list')
+def handle_back_to_joined_list(call):
+    """Qo'shilgan startaplar ro'yxatiga qaytish"""
+    try:
+        user_id = call.from_user.id
+        joined_startup_ids = get_user_joined_startups(user_id)
+        
+        if not joined_startup_ids:
+            bot.answer_callback_query(call.id, "❌ Startaplar topilmadi!", show_alert=True)
+            return
+        
+        startups = get_startups_by_ids(joined_startup_ids)
+        show_joined_startups_page(call.message.chat.id, user_id, startups, 1, call.message.message_id)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Back to joined list error: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
 # ⚙️ ADMIN PANEL
 @bot.message_handler(func=lambda message: message.text == '⚙️ Admin panel' and message.chat.id == ADMIN_ID)
@@ -2034,7 +2169,7 @@ def show_pending_startups(call):
         markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_admin_startups'))
     else:
         total_pages = max(1, (total + 4) // 5)
-        text = f"⏳ <b>Kutilayotgan startaplar</b>\n📄 <b>Sahifa:</b> {page}/{total_pages}\n\n"
+        text = f"⏳ <b>Kutilayotgan startaplar</b>\n\n"
         
         for i, startup in enumerate(startups, start=(page-1)*5+1):
             user = get_user(startup['owner_id'])
@@ -2044,15 +2179,12 @@ def show_pending_startups(call):
         
         markup = InlineKeyboardMarkup()
         
-        # Sahifa navigatsiyasi
+        # Sahifa navigatsiyasi - faqat o'ng/Chap
         nav_buttons = []
         if page > 1:
-            nav_buttons.append(InlineKeyboardButton('◀️', callback_data=f'pending_startups_{page-1}'))
-        
-        nav_buttons.append(InlineKeyboardButton(f'{page}/{total_pages}', callback_data='current_page'))
-        
+            nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'pending_startups_{page-1}'))
         if page < total_pages:
-            nav_buttons.append(InlineKeyboardButton('▶️', callback_data=f'pending_startups_{page+1}'))
+            nav_buttons.append(InlineKeyboardButton('Keyingi ▶️', callback_data=f'pending_startups_{page+1}'))
         
         if nav_buttons:
             markup.row(*nav_buttons)
@@ -2610,7 +2742,7 @@ def update_channel_post(startup_id: str):
         user = get_user(startup['owner_id'])
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         
-        # Post matni
+        # POST MATNI - HTML formatida, escape qilingan
         channel_text = (
             f"🚀 <b>{escape_html(startup['name'])}</b>\n\n"
             f"📝 {escape_html(startup['description'])}\n\n"
@@ -2641,14 +2773,16 @@ def update_channel_post(startup_id: str):
                     chat_id=CHANNEL_USERNAME,
                     message_id=post_id,
                     caption=channel_text,
-                    reply_markup=markup
+                    reply_markup=markup,
+                    parse_mode='HTML'
                 )
             else:
                 bot.edit_message_text(
                     text=channel_text,
                     chat_id=CHANNEL_USERNAME,
                     message_id=post_id,
-                    reply_markup=markup
+                    reply_markup=markup,
+                    parse_mode='HTML'
                 )
             
             # A'zolar sonini yangilash
