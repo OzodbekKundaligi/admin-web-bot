@@ -21,7 +21,7 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', '7903688837'))
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode='HTML')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# HTML belgilarni tozalash funksiyasi
+# HTML belgilarni tozalash funksiyasi - YANGI VERSIYA
 def escape_html(text):
     """HTML belgilarini tozalash - Telegram HTML formatida ishlash uchun"""
     if not text:
@@ -29,10 +29,16 @@ def escape_html(text):
     
     text = str(text)
     
-    # Faqat xavfli HTML belgilarni escape qilish
-    text = text.replace('&', '&amp;')
-    text = text.replace('<', '&lt;')
-    text = text.replace('>', '&gt;')
+    # Faqat xavfli belgilarni escape qilish
+    # HTML teglarini o'zgarmas qoldiramiz
+    replacements = [
+        ('&', '&amp;'),
+        ('<', '&lt;'),
+        ('>', '&gt;'),
+    ]
+    
+    for old, new in replacements:
+        text = text.replace(old, new)
     
     return text
 
@@ -191,7 +197,7 @@ def check_subscription_callback(call):
         bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
 
 def request_phone_number(message):
-    """Foydalanuvchidan telefon raqamini so'rash"""
+    """Foydalanuvchidan telefon raqamni so'rash"""
     user_id = message.from_user.id
     set_user_state(user_id, 'waiting_phone')
     
@@ -231,7 +237,7 @@ def handle_contact(message):
             
             bot.send_message(
                 message.chat.id,
-                f"✅ <b>{escape_html(first_name)}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
+                f"✅ <b>{first_name}, qoyil ro'yxatdan o'tdingiz!</b>\n\n",
                 reply_markup=create_main_menu(user_id)
             )
         elif state == 'waiting_phone_edit':
@@ -256,7 +262,7 @@ def send_welcome_back_message(message_or_call, first_name):
     
     bot.send_message(
         chat_id,
-        f"🎉 <b>Qaytganingiz bilan, {escape_html(first_name)}!</b>\n\n"
+        f"🎉 <b>Qaytganingiz bilan, {first_name}!</b>\n\n"
         f"🚀 <b>GarajHub</b> startaplar platformasiga xush kelibsiz!\n\n",
         reply_markup=create_main_menu(user_id)
     )
@@ -282,6 +288,295 @@ def show_main_menu(message_or_call):
     text = "🏠 <b>Asosiy menyu</b>\n\nQuyidagi menyudan kerakli bo'limni tanlang:"
     
     bot.send_message(chat_id, text, reply_markup=create_main_menu(user_id))
+
+# 👤 PROFIL BO'LIMI
+@bot.message_handler(func=lambda message: message.text == '👤 Profil')
+def show_profile(message):
+    try:
+        user_id = message.from_user.id
+        clear_user_state(user_id)
+        
+        user = get_user(user_id)
+        if not user:
+            save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
+            user = get_user(user_id)
+        
+        profile_text = (
+            "👤 <b>Profil ma'lumotlari:</b>\n\n"
+            f"🧑 <b>Ism:</b> {user.get('first_name', '—')}\n"
+            f"🧾 <b>Familiya:</b> {user.get('last_name', '—')}\n"
+            f"⚧️ <b>Jins:</b> {user.get('gender', '—')}\n"
+            f"📞 <b>Telefon:</b> {user.get('phone', '—')}\n"
+            f"🎂 <b>Tug'ilgan sana:</b> {user.get('birth_date', '—')}\n"
+            f"🔧 <b>Mutaxassislik:</b> {user.get('specialization', '—')}\n"
+            f"📈 <b>Tajriba:</b> {user.get('experience', '—')}\n"
+            f"📝 <b>Bio:</b> {user.get('bio', '—')}\n\n"
+            "🛠 <b>Tahrirlash uchun tugmalardan birini tanlang:</b>"
+        )
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton('✏️ Ism', callback_data='edit_first_name'),
+            InlineKeyboardButton('✏️ Familiya', callback_data='edit_last_name'),
+            InlineKeyboardButton('📞 Telefon', callback_data='edit_phone'),
+            InlineKeyboardButton('⚧️ Jins', callback_data='edit_gender'),
+            InlineKeyboardButton('🎂 Tug\'ilgan sana', callback_data='edit_birth_date'),
+            InlineKeyboardButton('🔧 Mutaxassislik', callback_data='edit_specialization'),
+            InlineKeyboardButton('📈 Tajriba', callback_data='edit_experience'),
+            InlineKeyboardButton('📝 Bio', callback_data='edit_bio')
+        )
+        markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_main_menu'))
+
+        bot.send_message(message.chat.id, profile_text, reply_markup=markup)
+        
+    except Exception as e:
+        logging.error(f"Profil ko'rsatishda xatolik: {e}")
+        bot.send_message(message.chat.id, "⚠️ <b>Xatolik yuz berdi!</b>",
+                        reply_markup=create_back_button(True))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('edit_'))
+def handle_edit_profile(call):
+    user_id = call.from_user.id
+    
+    try:
+        if call.data == 'edit_first_name':
+            set_user_state(user_id, 'editing_first_name')
+            msg = bot.send_message(call.message.chat.id, "📝 <b>Ismingizni kiriting:</b>", 
+                                  reply_markup=create_back_button())
+            bot.register_next_step_handler(msg, process_first_name)
+        
+        elif call.data == 'edit_last_name':
+            set_user_state(user_id, 'editing_last_name')
+            msg = bot.send_message(call.message.chat.id, "📝 <b>Familiyangizni kiriting:</b>", 
+                                  reply_markup=create_back_button())
+            bot.register_next_step_handler(msg, process_last_name)
+        
+        elif call.data == 'edit_phone':
+            set_user_state(user_id, 'waiting_phone_edit')
+            markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
+            markup.add(KeyboardButton('🔙 Orqaga'))
+            
+            bot.send_message(
+                call.message.chat.id,
+                "📱 <b>Yangi telefon raqamingizni yuboring:</b>",
+                reply_markup=markup
+            )
+        
+        elif call.data == 'edit_gender':
+            markup = InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                InlineKeyboardButton('👨 Erkak', callback_data='gender_male'),
+                InlineKeyboardButton('👩 Ayol', callback_data='gender_female'),
+                InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_profile')
+            )
+            
+            try:
+                bot.edit_message_text(
+                    "⚧️ <b>Jinsingizni tanlang:</b>",
+                    call.message.chat.id,
+                    call.message.message_id,
+                    reply_markup=markup
+                )
+            except:
+                bot.send_message(call.message.chat.id, "⚧️ <b>Jinsingizni tanlang:</b>", reply_markup=markup)
+        
+        elif call.data == 'edit_birth_date':
+            set_user_state(user_id, 'editing_birth_date')
+            msg = bot.send_message(
+                call.message.chat.id, 
+                "🎂 <b>Tug'ilgan sanangizni kiriting (kun-oy-yil)</b>\n"
+                "Masalan: 30-04-2000", 
+                reply_markup=create_back_button()
+            )
+            bot.register_next_step_handler(msg, process_birth_date)
+        
+        elif call.data == 'edit_specialization':
+            set_user_state(user_id, 'editing_specialization')
+            msg = bot.send_message(
+                call.message.chat.id, 
+                "🔧 <b>Mutaxassisligingizni kiriting:</b>\n\n"
+                "Masalan: Python, AI, ML", 
+                reply_markup=create_back_button()
+            )
+            bot.register_next_step_handler(msg, process_specialization)
+        
+        elif call.data == 'edit_experience':
+            set_user_state(user_id, 'editing_experience')
+            msg = bot.send_message(
+                call.message.chat.id, 
+                "📈 <b>Tajribangizni kiriting:</b>\n\n"
+                "Masalan: 5 yil", 
+                reply_markup=create_back_button()
+            )
+            bot.register_next_step_handler(msg, process_experience)
+        
+        elif call.data == 'edit_bio':
+            set_user_state(user_id, 'editing_bio')
+            msg = bot.send_message(call.message.chat.id, "📝 <b>Bio kiriting:</b>", 
+                                  reply_markup=create_back_button())
+            bot.register_next_step_handler(msg, process_bio)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Profil tahrirlashda xatolik: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+        show_profile(call.message)
+
+def process_first_name(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Ism kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "📝 <b>Ismingizni kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_first_name)
+        return
+    
+    first_name = message.text.strip()
+    update_user_field(user_id, 'first_name', first_name)
+    bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
+
+def process_last_name(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Familiya kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "📝 <b>Familiyangizni kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_last_name)
+        return
+    
+    last_name = message.text.strip()
+    update_user_field(user_id, 'last_name', last_name)
+    bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
+
+@bot.callback_query_handler(func=lambda call: call.data in ['gender_male', 'gender_female'])
+def process_gender(call):
+    try:
+        user_id = call.from_user.id
+        gender = 'Erkak' if call.data == 'gender_male' else 'Ayol'
+        update_user_field(user_id, 'gender', gender)
+        
+        bot.answer_callback_query(call.id, "✅ Jins muvaffaqiyatli saqlandi")
+        show_profile(call.message)
+        
+    except Exception as e:
+        logging.error(f"Jinsni saqlashda xatolik: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_profile')
+def back_to_profile(call):
+    try:
+        show_profile(call.message)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logging.error(f"Profilga qaytishda xatolik: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Xatolik yuz berdi!", show_alert=True)
+
+def process_birth_date(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Sana kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "🎂 <b>Tug'ilgan sanangizni kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_birth_date)
+        return
+    
+    birth_date = message.text.strip()
+    update_user_field(user_id, 'birth_date', birth_date)
+    bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sana muvaffaqiyatli saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
+
+def process_specialization(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Mutaxassislik kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "🔧 <b>Mutaxassisligingizni kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_specialization)
+        return
+    
+    specialization = message.text.strip()
+    update_user_specialization(user_id, specialization)
+    bot.send_message(message.chat.id, "✅ <b>Mutaxassislik muvaffaqiyatli saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
+
+def process_experience(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Tajriba kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "📈 <b>Tajribangizni kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_experience)
+        return
+    
+    experience = message.text.strip()
+    update_user_experience(user_id, experience)
+    bot.send_message(message.chat.id, "✅ <b>Tajriba muvaffaqiyatli saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
+
+def process_bio(message):
+    user_id = message.from_user.id
+    
+    if message.text == '🔙 Orqaga':
+        clear_user_state(user_id)
+        show_profile(message)
+        return
+    
+    if not message.text or message.text.strip() == '':
+        bot.send_message(message.chat.id, "❌ <b>Bio kiritilmadi!</b>", 
+                        reply_markup=create_back_button())
+        msg = bot.send_message(message.chat.id, "📝 <b>Bio kiriting:</b>", 
+                              reply_markup=create_back_button())
+        bot.register_next_step_handler(msg, process_bio)
+        return
+    
+    bio = message.text.strip()
+    update_user_field(user_id, 'bio', bio)
+    bot.send_message(message.chat.id, "✅ <b>Bio saqlandi</b>")
+    clear_user_state(user_id)
+    show_profile(message)
 
 # 🌐 STARTAPLAR BO'LIMI
 @bot.message_handler(func=lambda message: message.text == '🌐 Startaplar')
@@ -351,13 +646,13 @@ def show_recommended_page(chat_id, page, message_id=None):
     
     text = (
         f"💡 <b>Tavsiya {page}/{total_pages}</b>\n\n"
-        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+        f"🎯 <b>Nomi:</b> {startup['name']}\n"
         f"📅 <b>Boshlangan sana:</b> {start_date}\n"
-        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-        f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+        f"👤 <b>Muallif:</b> {owner_name}\n"
+        f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+        f"🔧 <b>Kerakli mutaxassislar:</b> {startup.get('required_skills', '—')}\n"
         f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-        f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
+        f"📌 <b>Tavsif:</b> {startup['description']}"
     )
     
     markup = InlineKeyboardMarkup()
@@ -368,7 +663,7 @@ def show_recommended_page(chat_id, page, message_id=None):
     else:
         markup.add(InlineKeyboardButton('🤝 Qo\'shilish', callback_data=f'join_startup_{startup["_id"]}'))
     
-    # Navigatsiya tugmalari - faqat o'ng/Chap tugmalar
+    # Navigatsiya tugmalari
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'rec_page_{page-1}'))
@@ -503,18 +798,18 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
             if message_id:
                 try:
                     bot.edit_message_text(
-                        f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
+                        f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
                         chat_id=chat_id,
                         message_id=message_id,
                         reply_markup=markup
                     )
                 except:
                     bot.send_message(chat_id, 
-                                    f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
+                                    f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
                                     reply_markup=markup)
             else:
                 bot.send_message(chat_id, 
-                                f"🏷️ <b>{escape_html(category_name)}</b> kategoriyasida hozircha startup mavjud emas.",
+                                f"🏷️ <b>{category_name}</b> kategoriyasida hozircha startup mavjud emas.",
                                 reply_markup=markup)
             return
         
@@ -541,7 +836,7 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
         }
         emoji = category_emojis.get(category_name, '🏷️')
         
-        text = f"{emoji} <b>{escape_html(category_name)} startaplari</b>\n\n"
+        text = f"{emoji} <b>{category_name} startaplari</b>\n\n"
         
         for i, startup in enumerate(page_startups, start=start_idx+1):
             user = get_user(startup['owner_id'])
@@ -552,7 +847,7 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
             max_members = startup.get('max_members', 10)
             
             status_emoji = '✅' if current_members < max_members else '❌'
-            text += f"{i}. <b>{escape_html(startup['name'])}</b> – {escape_html(owner_name)} {status_emoji}\n"
+            text += f"{i}. <b>{startup['name']}</b> – {owner_name} {status_emoji}\n"
         
         markup = InlineKeyboardMarkup(row_width=5)
         
@@ -566,7 +861,7 @@ def show_category_startups(chat_id, category_name, page, message_id=None):
         if numbers:
             markup.row(*numbers)
         
-        # Navigatsiya - faqat o'ng/Chap tugmalar
+        # Navigatsiya
         nav_buttons = []
         if page > 1:
             nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'cat_page_{category_name}_{page-1}'))
@@ -639,13 +934,13 @@ def handle_category_startup_view(call):
                     pass
         
         text = (
-            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+            f"🎯 <b>Nomi:</b> {startup['name']}\n"
             f"📅 <b>Boshlangan sana:</b> {start_date}\n"
-            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b> {startup.get('required_skills', '—')}\n"
             f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
+            f"📌 <b>Tavsif:</b> {startup['description']}"
         )
         
         markup = InlineKeyboardMarkup()
@@ -760,12 +1055,12 @@ def handle_join_startup(call):
                 
                 text = (
                     f"🆕 <b>Qo'shilish so'rovi</b>\n\n"
-                    f"👤 <b>Foydalanuvchi:</b> <a href='tg://user?id={user_id}'>{escape_html(user_name)}</a>\n"
+                    f"👤 <b>Foydalanuvchi:</b> <a href='tg://user?id={user_id}'>{user_name}</a>\n"
                     f"📞 <b>Telefon:</b> {user.get('phone', '—')}\n"
-                    f"🔧 <b>Mutaxassislik:</b> {escape_html(user.get('specialization', '—'))}\n"
-                    f"📈 <b>Tajriba:</b> {escape_html(user.get('experience', '—'))}\n"
-                    f"📝 <b>Bio:</b> {escape_html(user.get('bio', '—'))}\n\n"
-                    f"🎯 <b>Startup:</b> {escape_html(startup['name'])}"
+                    f"🔧 <b>Mutaxassislik:</b> {user.get('specialization', '—')}\n"
+                    f"📈 <b>Tajriba:</b> {user.get('experience', '—')}\n"
+                    f"📝 <b>Bio:</b> {user.get('bio', '—')}\n\n"
+                    f"🎯 <b>Startup:</b> {startup['name']}"
                 )
                 
                 markup = InlineKeyboardMarkup()
@@ -847,7 +1142,7 @@ def approve_join_request(call):
                     user_id,
                     f"🎉 <b>Tabriklaymiz!</b>\n\n"
                     f"✅ Sizning so'rovingiz qabul qilindi.\n\n"
-                    f"🎯 <b>Startup:</b> {escape_html(startup['name'])}\n"
+                    f"🎯 <b>Startup:</b> {startup['name']}\n"
                     f"🔗 <b>Guruhga qo'shilish:</b> {startup.get('group_link', '—')}"
                 )
             except Exception as e:
@@ -918,229 +1213,6 @@ def reject_join_request(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'full_members')
 def handle_full_members(call):
     bot.answer_callback_query(call.id, "❌ A'zolar to'ldi!", show_alert=True)
-
-# 👤 PROFIL BO'LIMI
-@bot.message_handler(func=lambda message: message.text == '👤 Profil')
-def show_profile(message):
-    user_id = message.from_user.id
-    set_user_state(user_id, 'in_profile')
-    
-    user = get_user(user_id)
-    if not user:
-        # Agar foydalanuvchi hali ro'yxatdan o'tmagan bo'lsa
-        save_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
-        user = get_user(user_id)
-    
-    profile_text = (
-        "👤 <b>Profil ma'lumotlari:</b>\n\n"
-        f"🧑 <b>Ism:</b> {escape_html(user.get('first_name', '—'))}\n"
-        f"🧾 <b>Familiya:</b> {escape_html(user.get('last_name', '—'))}\n"
-        f"⚧️ <b>Jins:</b> {escape_html(user.get('gender', '—'))}\n"
-        f"📞 <b>Telefon:</b> {user.get('phone', '—')}\n"
-        f"🎂 <b>Tug'ilgan sana:</b> {escape_html(user.get('birth_date', '—'))}\n"
-        f"🔧 <b>Mutaxassislik:</b> {escape_html(user.get('specialization', '—'))}\n"
-        f"📈 <b>Tajriba:</b> {escape_html(user.get('experience', '—'))}\n"
-        f"📝 <b>Bio:</b> {escape_html(user.get('bio', '—'))}\n\n"
-        "🛠 <b>Tahrirlash uchun tugmalardan birini tanlang:</b>"
-    )
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton('✏️ Ism', callback_data='edit_first_name'),
-        InlineKeyboardButton('✏️ Familiya', callback_data='edit_last_name'),
-        InlineKeyboardButton('📞 Telefon', callback_data='edit_phone'),
-        InlineKeyboardButton('⚧️ Jins', callback_data='edit_gender'),
-        InlineKeyboardButton('🎂 Tug\'ilgan sana', callback_data='edit_birth_date'),
-        InlineKeyboardButton('🔧 Mutaxassislik', callback_data='edit_specialization'),
-        InlineKeyboardButton('📈 Tajriba', callback_data='edit_experience'),
-        InlineKeyboardButton('📝 Bio', callback_data='edit_bio')
-    )
-    markup.add(InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_main_menu'))
-
-    bot.send_message(message.chat.id, profile_text, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('edit_'))
-def handle_edit_profile(call):
-    user_id = call.from_user.id
-    
-    if call.data == 'edit_first_name':
-        set_user_state(user_id, 'editing_first_name')
-        msg = bot.send_message(call.message.chat.id, "📝 <b>Ismingizni kiriting:</b>", reply_markup=create_back_button())
-        bot.register_next_step_handler(msg, process_first_name)
-    
-    elif call.data == 'edit_last_name':
-        set_user_state(user_id, 'editing_last_name')
-        msg = bot.send_message(call.message.chat.id, "📝 <b>Familiyangizni kiriting:</b>", reply_markup=create_back_button())
-        bot.register_next_step_handler(msg, process_last_name)
-    
-    elif call.data == 'edit_phone':
-        # Telefon raqamni qayta so'rash uchun
-        set_user_state(user_id, 'waiting_phone_edit')
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton('📱 Telefon raqamni yuborish', request_contact=True))
-        markup.add(KeyboardButton('🔙 Orqaga'))
-        
-        bot.send_message(
-            call.message.chat.id,
-            "📱 <b>Yangi telefon raqamingizni yuboring:</b>",
-            reply_markup=markup
-        )
-    
-    elif call.data == 'edit_gender':
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton('👨 Erkak', callback_data='gender_male'),
-            InlineKeyboardButton('👩 Ayol', callback_data='gender_female'),
-            InlineKeyboardButton('🔙 Orqaga', callback_data='back_to_profile')
-        )
-        try:
-            bot.edit_message_text(
-                "⚧️ <b>Jinsingizni tanlang:</b>",
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=markup
-            )
-        except:
-            bot.send_message(call.message.chat.id, "⚧️ <b>Jinsingizni tanlang:</b>", reply_markup=markup)
-    
-    elif call.data == 'edit_birth_date':
-        set_user_state(user_id, 'editing_birth_date')
-        msg = bot.send_message(
-            call.message.chat.id, 
-            "🎂 <b>Tug'ilgan sanangizni kiriting (kun-oy-yil)</b>\n"
-            "Masalan: <code>30-04-2000</code>", 
-            reply_markup=create_back_button()
-        )
-        bot.register_next_step_handler(msg, process_birth_date)
-    
-    elif call.data == 'edit_specialization':
-        set_user_state(user_id, 'editing_specialization')
-        msg = bot.send_message(
-            call.message.chat.id, 
-            "🔧 <b>Mutaxassisligingizni kiriting:</b>\n\n"
-            "Masalan: <code>Python, AI, ML</code>", 
-            reply_markup=create_back_button()
-        )
-        bot.register_next_step_handler(msg, process_specialization)
-    
-    elif call.data == 'edit_experience':
-        set_user_state(user_id, 'editing_experience')
-        msg = bot.send_message(
-            call.message.chat.id, 
-            "📈 <b>Tajribangizni kiriting:</b>\n\n"
-            "Masalan: <code>5 yil</code>", 
-            reply_markup=create_back_button()
-        )
-        bot.register_next_step_handler(msg, process_experience)
-    
-    elif call.data == 'edit_bio':
-        set_user_state(user_id, 'editing_bio')
-        msg = bot.send_message(call.message.chat.id, "📝 <b>Bio kiriting:</b>", reply_markup=create_back_button())
-        bot.register_next_step_handler(msg, process_bio)
-    
-    bot.answer_callback_query(call.id)
-
-def process_first_name(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    first_name = escape_html(message.text)
-    update_user_field(user_id, 'first_name', first_name)
-    bot.send_message(message.chat.id, "✅ <b>Ismingiz muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-def process_last_name(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    last_name = escape_html(message.text)
-    update_user_field(user_id, 'last_name', last_name)
-    bot.send_message(message.chat.id, "✅ <b>Familiyangiz muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-@bot.callback_query_handler(func=lambda call: call.data in ['gender_male', 'gender_female'])
-def process_gender(call):
-    user_id = call.from_user.id
-    gender = 'Erkak' if call.data == 'gender_male' else 'Ayol'
-    update_user_field(user_id, 'gender', gender)
-    
-    bot.answer_callback_query(call.id, "✅ Jins muvaffaqiyatli saqlandi")
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    show_profile(call.message)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'back_to_profile')
-def back_to_profile(call):
-    show_profile(call.message)
-    bot.answer_callback_query(call.id)
-
-def process_birth_date(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    birth_date = escape_html(message.text)
-    update_user_field(user_id, 'birth_date', birth_date)
-    bot.send_message(message.chat.id, "✅ <b>Tug'ilgan sana muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-def process_specialization(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    specialization = escape_html(message.text)
-    update_user_specialization(user_id, specialization)
-    bot.send_message(message.chat.id, "✅ <b>Mutaxassislik muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-def process_experience(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    experience = escape_html(message.text)
-    update_user_experience(user_id, experience)
-    bot.send_message(message.chat.id, "✅ <b>Tajriba muvaffaqiyatli saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
-
-def process_bio(message):
-    user_id = message.from_user.id
-    
-    if message.text == '🔙 Orqaga':
-        clear_user_state(user_id)
-        show_profile(message)
-        return
-    
-    bio = escape_html(message.text)
-    update_user_field(user_id, 'bio', bio)
-    bot.send_message(message.chat.id, "✅ <b>Bio saqlandi</b>")
-    clear_user_state(user_id)
-    show_profile(message)
 
 # 🚀 STARTUP YARATISH
 @bot.message_handler(func=lambda message: message.text == '🚀 Startup yaratish')
@@ -1455,12 +1527,12 @@ def process_startup_max_members(message):
     
     text = (
         f"🆕 <b>Yangi startup yaratildi!</b>\n\n"
-        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
-        f"📌 <b>Tavsif:</b> {escape_html(startup['description'][:200])}...\n"
-        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-        f"🔧 <b>Kerak:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+        f"🎯 <b>Nomi:</b> {startup['name']}\n"
+        f"📌 <b>Tavsif:</b> {startup['description'][:200]}...\n"
+        f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+        f"🔧 <b>Kerak:</b> {startup.get('required_skills', '—')}\n"
         f"👥 <b>Maksimal a'zolar:</b> {startup.get('max_members', '—')}\n\n"
-        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+        f"👤 <b>Muallif:</b> {owner_name}\n"
         f"📱 <b>Aloqa:</b> @{user.get('username', '—')}"
     )
     
@@ -1531,7 +1603,7 @@ def show_my_startups_page(chat_id, user_id, page, message_id=None):
             'rejected': '❌'
         }.get(startup['status'], '❓')
         
-        text += f"{i}. {escape_html(startup['name'])} – {status_emoji}\n"
+        text += f"{i}. {startup['name']} – {status_emoji}\n"
     
     markup = InlineKeyboardMarkup(row_width=5)
     
@@ -1545,7 +1617,7 @@ def show_my_startups_page(chat_id, user_id, page, message_id=None):
     if buttons:
         markup.row(*buttons)
     
-    # Navigatsiya - faqat o'ng/Chap tugmalar
+    # Navigatsiya
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'my_startup_page_{page-1}'))
@@ -1631,13 +1703,13 @@ def view_my_startup_details(chat_id, user_id, startup, message_id=None):
                 pass
     
     text = (
-        f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+        f"🎯 <b>Nomi:</b> {startup['name']}\n"
         f"📊 <b>Holati:</b> {status_text}\n"
         f"📅 <b>Boshlanish sanasi:</b> {start_date}\n"
-        f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-        f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
+        f"👤 <b>Muallif:</b> {owner_name}\n"
+        f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
         f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-        f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}"
+        f"📌 <b>Tavsif:</b> {startup['description']}"
     )
     
     markup = InlineKeyboardMarkup()
@@ -1717,11 +1789,11 @@ def view_startup_members(call):
                 if not member_name:
                     member_name = f"User {member.get('user_id', '')}"
                 
-                bio_short = escape_html(member.get('bio', ''))
+                bio_short = member.get('bio', '')
                 if bio_short and len(bio_short) > 30:
                     bio_short = bio_short[:30] + '...'
                 
-                text += f"{i}. <b>{escape_html(member_name)}</b>\n"
+                text += f"{i}. <b>{member_name}</b>\n"
                 if member.get('phone'):
                     text += f"   📱 {member.get('phone')}\n"
                 if bio_short:
@@ -1730,7 +1802,7 @@ def view_startup_members(call):
         
         markup = InlineKeyboardMarkup()
         
-        # Navigatsiya - faqat o'ng/Chap tugmalar
+        # Navigatsiya
         nav_buttons = []
         if page > 1:
             nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'view_members_{startup_id}_{page-1}'))
@@ -1826,7 +1898,7 @@ def process_startup_photo(message, startup_id, results_text):
                     photo_id,
                     caption=(
                         f"🏁 <b>Startup yakunlandi</b>\n\n"
-                        f"🎯 <b>{escape_html(startup['name'])}</b>\n"
+                        f"🎯 <b>{startup['name']}</b>\n"
                         f"📅 <b>Yakunlangan sana:</b> {end_date}\n"
                         f"📝 <b>Natijalar:</b> {results_text}"
                     )
@@ -1852,7 +1924,7 @@ def process_startup_photo(message, startup_id, results_text):
         msg = bot.send_message(message.chat.id, "🖼 <b>Natijalar rasmini yuboring:</b>", reply_markup=create_back_button())
         bot.register_next_step_handler(msg, process_startup_photo, startup_id, results_text)
 
-# 🤝 QO'SHILGAN STARTAPLAR - YAXSHILANGAN VERSIYA
+# 🤝 QO'SHILGAN STARTAPLAR
 @bot.message_handler(func=lambda message: message.text == '🤝 Qo\'shilgan startaplar' and get_user_state(message.from_user.id) == 'in_my_startups')
 def show_joined_startups(message):
     user_id = message.from_user.id
@@ -1895,8 +1967,8 @@ def show_joined_startups_page(chat_id, user_id, startups, page, message_id=None)
         current_members = get_startup_member_count(startup['_id'])
         max_members = startup.get('max_members', 10)
         
-        text += f"{i}. <b>{escape_html(startup['name'])}</b> {status_emoji}\n"
-        text += f"   👥 {current_members}/{max_members} | 🏷️ {escape_html(startup.get('category', '—'))}\n\n"
+        text += f"{i}. <b>{startup['name']}</b> {status_emoji}\n"
+        text += f"   👥 {current_members}/{max_members} | 🏷️ {startup.get('category', '—')}\n\n"
     
     markup = InlineKeyboardMarkup(row_width=5)
     
@@ -1910,7 +1982,7 @@ def show_joined_startups_page(chat_id, user_id, startups, page, message_id=None)
     if numbers:
         markup.row(*numbers)
     
-    # Navigatsiya tugmalari - faqat o'ng/Chap
+    # Navigatsiya tugmalari
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'joined_page_{page-1}'))
@@ -1992,14 +2064,14 @@ def handle_joined_startup_view(call):
         
         text = (
             f"🤝 <b>Qo'shilgan startup:</b>\n\n"
-            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
+            f"🎯 <b>Nomi:</b> {startup['name']}\n"
             f"📅 <b>Boshlangan sana:</b> {start_date}\n"
-            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b> {startup.get('required_skills', '—')}\n"
             f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n"
-            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}\n"
-            f"🔗 <b>Guruh havolasi:</b> {escape_html(startup.get('group_link', '—'))}"
+            f"📌 <b>Tavsif:</b> {startup['description']}\n"
+            f"🔗 <b>Guruh havolasi:</b> {startup.get('group_link', '—')}"
         )
         
         markup = InlineKeyboardMarkup()
@@ -2106,7 +2178,7 @@ def admin_dashboard(message):
             if not name:
                 name = "Noma'lum"
             
-            dashboard_text += f"{i}. <b>{escape_html(name)}</b>\n"
+            dashboard_text += f"{i}. <b>{name}</b>\n"
         dashboard_text += "\n"
     
     if recent_startups:
@@ -2119,7 +2191,7 @@ def admin_dashboard(message):
                 'rejected': '❌'
             }.get(startup['status'], '❓')
             
-            dashboard_text += f"{i}. {escape_html(startup['name'])} {status_emoji}\n"
+            dashboard_text += f"{i}. {startup['name']} {status_emoji}\n"
     
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -2175,11 +2247,11 @@ def show_pending_startups(call):
             user = get_user(startup['owner_id'])
             owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
             
-            text += f"{i}. <b>{escape_html(startup['name'])}</b> – {escape_html(owner_name)}\n\n"
+            text += f"{i}. <b>{startup['name']}</b> – {owner_name}\n\n"
         
         markup = InlineKeyboardMarkup()
         
-        # Sahifa navigatsiyasi - faqat o'ng/Chap
+        # Sahifa navigatsiyasi
         nav_buttons = []
         if page > 1:
             nav_buttons.append(InlineKeyboardButton('◀️ Oldingi', callback_data=f'pending_startups_{page-1}'))
@@ -2191,7 +2263,7 @@ def show_pending_startups(call):
         
         # Startup tanlash
         for i, startup in enumerate(startups):
-            startup_name_short = escape_html(startup['name'][:20]) + '...' if len(startup['name']) > 20 else escape_html(startup['name'])
+            startup_name_short = startup['name'][:20] + '...' if len(startup['name']) > 20 else startup['name']
             markup.add(InlineKeyboardButton(f'{i+1}. {startup_name_short}', 
                                            callback_data=f'admin_view_startup_{startup["_id"]}'))
         
@@ -2224,14 +2296,14 @@ def admin_view_startup_details(call):
         
         text = (
             f"🖼 <b>Startup ma'lumotlari</b>\n\n"
-            f"🎯 <b>Nomi:</b> {escape_html(startup['name'])}\n"
-            f"📌 <b>Tavsif:</b> {escape_html(startup['description'])}\n\n"
-            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
+            f"🎯 <b>Nomi:</b> {startup['name']}\n"
+            f"📌 <b>Tavsif:</b> {startup['description']}\n\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
             f"📱 <b>Aloqa:</b> {owner_contact}\n"
-            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-            f"🔧 <b>Kerak:</b> {escape_html(startup.get('required_skills', '—'))}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerak:</b> {startup.get('required_skills', '—')}\n"
             f"👥 <b>Maksimal a'zolar:</b> {startup.get('max_members', '—')}\n"
-            f"🔗 <b>Guruh havolasi:</b> {escape_html(startup['group_link'])}\n"
+            f"🔗 <b>Guruh havolasi:</b> {startup['group_link']}\n"
             f"📅 <b>Yaratilgan sana:</b> {startup['created_at'][:10] if startup.get('created_at') else '—'}\n"
             f"📊 <b>Holati:</b> {startup['status']}"
         )
@@ -2300,7 +2372,7 @@ def admin_approve_startup(call):
             bot.send_message(
                 startup['owner_id'],
                 f"🎉 <b>Tabriklaymiz!</b>\n\n"
-                f"✅ '<b>{escape_html(startup['name'])}</b>' startupingiz tasdiqlandi va kanalga joylandi!"
+                f"✅ '<b>{startup['name']}</b>' startupingiz tasdiqlandi va kanalga joylandi!"
             )
         except:
             pass
@@ -2310,11 +2382,11 @@ def admin_approve_startup(call):
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         
         channel_text = (
-            f"🚀 <b>{escape_html(startup['name'])}</b>\n\n"
-            f"📝 {escape_html(startup['description'])}\n\n"
-            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b>\n{escape_html(startup.get('required_skills', '—'))}\n\n"
+            f"🚀 <b>{startup['name']}</b>\n\n"
+            f"📝 {startup['description']}\n\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
             f"👥 <b>A'zolar:</b> 0 / {startup.get('max_members', '—')}\n\n"
             f"➕ <b>O'z startupingizni yaratish uchun:</b> @{bot.get_me().username}"
         )
@@ -2360,7 +2432,7 @@ def admin_reject_startup(call):
                 bot.send_message(
                     startup['owner_id'],
                     f"❌ <b>Xabar!</b>\n\n"
-                    f"Sizning '<b>{escape_html(startup['name'])}</b>' startupingiz rad etildi."
+                    f"Sizning '<b>{startup['name']}</b>' startupingiz rad etildi."
                 )
             except:
                 pass
@@ -2398,7 +2470,7 @@ def admin_users(message):
         if not name:
             name = "Noma'lum"
         
-        text += f"{i}. <b>{escape_html(name)}</b>\n"
+        text += f"{i}. <b>{name}</b>\n"
         text += f"   👤 @{user.get('username', '—')} | 📅 {joined_date}\n\n"
     
     markup = InlineKeyboardMarkup()
@@ -2715,7 +2787,7 @@ def handle_all_messages(message):
         
         # Agar asosiy menyu tugmalaridan biri bosilsa
         if message.text in ['🌐 Startaplar', '🚀 Startup yaratish', '📌 Startaplarim', '👤 Profil']:
-            return  # Bu handlerlar allaqachon bor
+            return
         
         # Boshqa hollarda asosiy menyuni ko'rsatish
         show_main_menu(message)
@@ -2742,13 +2814,13 @@ def update_channel_post(startup_id: str):
         user = get_user(startup['owner_id'])
         owner_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else "Noma'lum"
         
-        # POST MATNI - HTML formatida, escape qilingan
+        # POST MATNI - HTML formatida
         channel_text = (
-            f"🚀 <b>{escape_html(startup['name'])}</b>\n\n"
-            f"📝 {escape_html(startup['description'])}\n\n"
-            f"👤 <b>Muallif:</b> {escape_html(owner_name)}\n"
-            f"🏷️ <b>Kategoriya:</b> {escape_html(startup.get('category', '—'))}\n"
-            f"🔧 <b>Kerakli mutaxassislar:</b>\n{escape_html(startup.get('required_skills', '—'))}\n\n"
+            f"🚀 <b>{startup['name']}</b>\n\n"
+            f"📝 {startup['description']}\n\n"
+            f"👤 <b>Muallif:</b> {owner_name}\n"
+            f"🏷️ <b>Kategoriya:</b> {startup.get('category', '—')}\n"
+            f"🔧 <b>Kerakli mutaxassislar:</b>\n{startup.get('required_skills', '—')}\n\n"
             f"👥 <b>A'zolar:</b> {current_members} / {max_members}\n\n"
         )
         
